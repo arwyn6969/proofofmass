@@ -433,7 +433,9 @@ app.get('/api/nft/:tokenId', async (req, res) => {
   try {
     const tid = String(parseInt(req.params.tokenId, 10) || 0);
     const rows = await dbQuery('SELECT * FROM pom_badges WHERE token_id = ?', [tid]);
-    const b = rows[0];
+    const r0 = rows[0];
+    // only honor a binding that matches the CURRENTLY active contract + chain (ignores stale ones)
+    const b = (r0 && NFT && r0.contract && r0.contract.toLowerCase() === NFT.contract.toLowerCase() && r0.chain_id === NFT.chain_id) ? r0 : null;
     let name = 'ProofOfMass Badge #' + tid, desc = 'A soulbound proof-of-standing badge. Experimental research — not financial.', image = PUBLIC_BASE + '/og.png', agentId = null, attrs = [];
     if (b && b.identity) {
       const a = await getAgent(b.identity);
@@ -472,7 +474,10 @@ app.post('/api/badge/record', limit(20), async (req, res) => {
     if (!owner || owner.toLowerCase() !== wallet) return res.status(400).json({ error: 'wallet does not own that token on-chain' });
     const a = await getAgent(identity);
     if (!a) return res.status(404).json({ error: 'identity not found' });
-    await dbExec('INSERT INTO pom_badges (token_id, identity, wallet, contract, chain_id, tx) VALUES (?,?,?,?,?,?) ON CONFLICT(token_id) DO UPDATE SET identity=excluded.identity, wallet=excluded.wallet, tx=excluded.tx',
+    // immutable first-write: a token can't be re-pointed once bound (anti-hijack)
+    const existing = await dbQuery('SELECT identity FROM pom_badges WHERE token_id = ?', [tokenId]);
+    if (existing.length && existing[0].identity && existing[0].identity !== identity) return res.status(409).json({ error: 'token already bound to another position' });
+    await dbExec('INSERT INTO pom_badges (token_id, identity, wallet, contract, chain_id, tx) VALUES (?,?,?,?,?,?) ON CONFLICT(token_id) DO NOTHING',
       [tokenId, identity, wallet, NFT.contract, NFT.chain_id, tx]);
     res.json({ ok: true, token_id: tokenId, identity, metadata: PUBLIC_BASE + '/api/nft/' + tokenId });
   } catch (e) { res.status(500).json({ error: e.message }); }
