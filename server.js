@@ -1006,7 +1006,7 @@ try {
   INDEX_HTML = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8')
     .replace(/"(app\.js|styles\.css|field\.js|shared-visual\.js)"/g, '"$1?v=' + BUILD + '"');
 } catch (e) { console.error('index load:', e.message); }
-app.use(express.static(path.join(__dirname, 'public'), { index: false, etag: true }));
+app.use(express.static(path.join(__dirname, 'public'), { index: false, etag: true, setHeaders: (res, p) => { if (/\.(md|txt|json)$/i.test(p)) res.setHeader('Cache-Control', 'no-cache'); } }));
 app.get('*', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.type('html').send(INDEX_HTML || '<!doctype html><title>ProofOfMass</title>'); });
 
 const server = app.listen(PORT, () => { console.log('ProofOfMass explorer on ' + PORT + ' (group ' + GROUP + ')'); seedIfEmpty(); poaChains('warm').catch(function () {}); });
