@@ -137,7 +137,8 @@
         '<a href="#/" style="color:var(--muted);font-family:var(--mono);font-size:12px">← back to the field</a>' +
         '<div class="detail" style="margin-top:18px">' +
           '<div class="stage-col"><div class="stage" style="height:auto;pointer-events:auto;background:linear-gradient(180deg,var(--panel),var(--bg));border:1px solid var(--line);border-radius:18px;padding:18px;min-height:0">' + viz + '<div style="text-align:center;margin-top:10px;font-family:var(--mono);font-size:12px;color:' + (a.is_alpha ? 'var(--alpha)' : 'var(--muted)') + '">' + (a.is_alpha ? 'ALPHA' : esc(a.class_label)) + '</div></div>' +
-            '<button class="sharebtn" style="width:100%;justify-content:center;margin-top:12px;padding:11px" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button></div>' +
+            '<button class="sharebtn" style="width:100%;justify-content:center;margin-top:12px;padding:11px" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button>' +
+            '<a class="sharebtn" style="width:100%;justify-content:center;margin-top:8px;padding:11px" href="#/mint/' + a.id + '">◈ Mint soulbound badge</a></div>' +
           '<div><h2 style="font-size:26px;margin-bottom:10px">@' + esc(a.x_handle) + '</h2>' + ids +
             '<div class="shead" style="margin-top:26px"><h2>Ledger</h2><div class="line"></div></div><div class="events">' + events + '</div>' +
           '</div>' +
@@ -275,9 +276,93 @@
     return s;
   }
 
+  /* ───────── Mint (soulbound Base badge) ───────── */
+  function loadEthers() {
+    return window.ethers ? Promise.resolve() : new Promise(function (res, rej) {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js';
+      s.onload = res; s.onerror = function () { rej(new Error('failed to load ethers')); };
+      document.head.appendChild(s);
+    });
+  }
+  var POMmint = {
+    cfg: null, identity: null, provider: null, signer: null, account: null,
+    init: function (nft, id) { this.cfg = nft; this.identity = id; },
+    status: function (m) { var e = document.getElementById('mint-status'); if (e) e.innerHTML = m; },
+    connect: async function () {
+      try {
+        if (!window.ethereum) { this.status('No browser wallet found. Install MetaMask (or any injected wallet) to mint.'); return; }
+        this.status('Loading…'); await loadEthers();
+        await window.ethereum.request({ method: 'eth_requestAccounts' });
+        await this.ensureChain();
+        this.provider = new ethers.BrowserProvider(window.ethereum);
+        this.signer = await this.provider.getSigner();
+        this.account = await this.signer.getAddress();
+        this.status('Connected ' + this.account.slice(0, 6) + '…' + this.account.slice(-4) + ' — ready to mint.');
+        var cbtn = document.getElementById('mint-connect'), gbtn = document.getElementById('mint-go');
+        if (cbtn) cbtn.style.display = 'none'; if (gbtn) gbtn.style.display = 'inline-flex';
+      } catch (e) { this.status('Connect failed: ' + (e.message || e)); }
+    },
+    ensureChain: async function () {
+      var hex = '0x' + this.cfg.chain_id.toString(16);
+      try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }); }
+      catch (e) {
+        if (e.code === 4902) {
+          await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: hex, chainName: 'Base Sepolia', nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: ['https://sepolia.base.org'], blockExplorerUrls: ['https://sepolia.basescan.org'] }] });
+        } else throw e;
+      }
+    },
+    mint: async function () {
+      try {
+        this.status('Minting — confirm in your wallet…');
+        var abi = ['function mint() payable returns (uint256)', 'function mintFee() view returns (uint256)', 'event BadgeMinted(address indexed to, uint256 indexed tokenId)'];
+        var c = new ethers.Contract(this.cfg.contract, abi, this.signer);
+        var fee = await c.mintFee();
+        var tx = await c.mint({ value: fee });
+        this.status('Submitted ' + tx.hash.slice(0, 10) + '… waiting for confirmation.');
+        var rc = await tx.wait();
+        var tokenId = null;
+        for (var i = 0; i < rc.logs.length; i++) { try { var pl = c.interface.parseLog(rc.logs[i]); if (pl && pl.name === 'BadgeMinted') { tokenId = pl.args.tokenId.toString(); break; } } catch (e) {} }
+        if (tokenId == null) { this.status('Minted, but could not read the token id from logs.'); return; }
+        await fetch('api/badge/record', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token_id: +tokenId, identity: this.identity, wallet: this.account, tx: tx.hash }) });
+        var ex = this.cfg.explorer || 'https://sepolia.basescan.org';
+        this.status('✅ Badge #' + tokenId + ' minted & bound to this position!<br/><a href="' + ex + '/tx/' + tx.hash + '" target="_blank" style="color:var(--cyan)">view transaction</a> · <a href="' + shareBase() + '/api/nft/' + tokenId + '" target="_blank" style="color:var(--cyan)">metadata</a>');
+      } catch (e) { this.status('Mint failed: ' + (e.shortMessage || e.message || e)); }
+    }
+  };
+  window.POMmint = POMmint;
+
+  function renderMint(id) {
+    setActive(''); showField(false);
+    view.innerHTML = '<div class="wrap loading">loading…</div>';
+    Promise.all([CFG ? Promise.resolve(CFG) : api('api/config'), api('api/agent/' + encodeURIComponent(id))]).then(function (r) {
+      CFG = CFG || r[0]; var cfg = CFG, a = r[1].agent;
+      if (!cfg.nft || !cfg.nft.enabled) { view.innerHTML = '<section class="section"><div class="wrap loading">Badge minting isn\'t enabled yet.</div></section>'; return; }
+      var viz = V.massSVG({ mass: a.mass, vitality: a.vitality, isAlpha: a.is_alpha, scaleMax: a.scaleMax || a.mass, uid: a.short, size: 280, bg: '#05060a' });
+      var testnet = cfg.nft.chain === 'base-sepolia';
+      view.innerHTML = '<section class="section"><div class="wrap join">' +
+        '<a href="#/' + a.id + '" style="color:var(--muted);font-family:var(--mono);font-size:12px">← back to position</a>' +
+        '<div class="shead" style="margin-top:14px"><h2>Mint soulbound badge</h2><div class="line"></div></div>' +
+        '<div class="panel" style="display:grid;grid-template-columns:280px 1fr;gap:24px;align-items:center">' +
+          '<div>' + viz + '</div>' +
+          '<div><h3 style="border:none;margin:0 0 8px;letter-spacing:0;text-transform:none;font-size:22px;color:#fff">@' + esc(a.x_handle) + '</h3>' +
+            '<p style="color:var(--muted2);font-size:14px">A <b>soulbound</b> (non-transferable) badge on <b>Base</b> that reflects this position\'s live, PoA-derived mass. One per wallet. ' + (testnet ? '<span style="color:var(--alpha)">Testnet — free to mint.</span>' : '') + '</p>' +
+            '<div class="endpoint" style="margin:10px 0;font-size:11px">' + esc(cfg.nft.contract) + '</div>' +
+            '<div class="cta-row">' +
+              '<button class="cta primary" id="mint-connect" onclick="POMmint.connect()">Connect wallet</button>' +
+              '<button class="cta" id="mint-go" onclick="POMmint.mint()" style="display:none">◈ Mint badge</button>' +
+            '</div>' +
+            '<div id="mint-status" style="margin-top:12px;font-family:var(--mono);font-size:12px;color:var(--muted2);line-height:1.7"></div>' +
+          '</div>' +
+        '</div></div></section>';
+      POMmint.init(cfg.nft, a.id);
+    }).catch(function () { view.innerHTML = '<div class="wrap loading">Could not load mint page.</div>'; });
+  }
+
   function route() {
     var h = location.hash.replace(/^#\/?/, '');
     if (!h) return renderHome();
+    if (h.indexOf('mint/') === 0) return renderMint(h.slice(5));
     if (h === 'join') return renderJoin();
     if (h === 'protocol') return renderDoc('PROTOCOL.md', 'protocol');
     if (h === 'style') return renderDoc('STYLE.md', '');
