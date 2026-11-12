@@ -283,7 +283,7 @@ app.get('/api/config', (req, res) => {
     },
     docs: { short: PUBLIC_BASE + '/go.md', full: PUBLIC_BASE + '/SKILL.md', protocol: PUBLIC_BASE + '/PROTOCOL.md', style: PUBLIC_BASE + '/STYLE.md' },
     fuel: { enabled: !!VAULT_POA, vault_poa: VAULT_POA || null },
-    nft: NFT ? { enabled: true, contract: NFT.contract, chain_id: NFT.chain_id, chain: NFT.chain, explorer: NFT.explorer || null } : { enabled: false },
+    nft: NFT ? { enabled: true, contract: NFT.contract, chain_id: NFT.chain_id, chain: NFT.chain, explorer: NFT.explorer || null, mint_fee_eth: NFT.mint_fee_eth || null } : { enabled: false },
     experimental: true
   });
 });

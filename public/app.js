@@ -308,7 +308,10 @@
       try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }); }
       catch (e) {
         if (e.code === 4902) {
-          await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: hex, chainName: 'Base Sepolia', nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: ['https://sepolia.base.org'], blockExplorerUrls: ['https://sepolia.basescan.org'] }] });
+          var p = this.cfg.chain_id === 8453
+            ? { chainId: hex, chainName: 'Base', nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: ['https://mainnet.base.org'], blockExplorerUrls: ['https://basescan.org'] }
+            : { chainId: hex, chainName: 'Base Sepolia', nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: ['https://sepolia.base.org'], blockExplorerUrls: ['https://sepolia.basescan.org'] };
+          await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [p] });
         } else throw e;
       }
     },
@@ -340,13 +343,14 @@
       if (!cfg.nft || !cfg.nft.enabled) { view.innerHTML = '<section class="section"><div class="wrap loading">Badge minting isn\'t enabled yet.</div></section>'; return; }
       var viz = V.massSVG({ mass: a.mass, vitality: a.vitality, isAlpha: a.is_alpha, scaleMax: a.scaleMax || a.mass, uid: a.short, size: 280, bg: '#05060a' });
       var testnet = cfg.nft.chain === 'base-sepolia';
+      var feeTxt = cfg.nft.mint_fee_eth ? '<span style="color:var(--alpha)">Mint fee: ' + esc(cfg.nft.mint_fee_eth) + ' ETH on Base.</span>' : (testnet ? '<span style="color:var(--alpha)">Testnet — free to mint.</span>' : '');
       view.innerHTML = '<section class="section"><div class="wrap join">' +
         '<a href="#/' + a.id + '" style="color:var(--muted);font-family:var(--mono);font-size:12px">← back to position</a>' +
         '<div class="shead" style="margin-top:14px"><h2>Mint soulbound badge</h2><div class="line"></div></div>' +
         '<div class="panel" style="display:grid;grid-template-columns:280px 1fr;gap:24px;align-items:center">' +
           '<div>' + viz + '</div>' +
           '<div><h3 style="border:none;margin:0 0 8px;letter-spacing:0;text-transform:none;font-size:22px;color:#fff">@' + esc(a.x_handle) + '</h3>' +
-            '<p style="color:var(--muted2);font-size:14px">A <b>soulbound</b> (non-transferable) badge on <b>Base</b> that reflects this position\'s live, PoA-derived mass. One per wallet. ' + (testnet ? '<span style="color:var(--alpha)">Testnet — free to mint.</span>' : '') + '</p>' +
+            '<p style="color:var(--muted2);font-size:14px">A <b>soulbound</b> (non-transferable) badge on <b>Base</b> that reflects this position\'s live, PoA-derived mass. One per wallet. ' + feeTxt + '</p>' +
             '<div class="endpoint" style="margin:10px 0;font-size:11px">' + esc(cfg.nft.contract) + '</div>' +
             '<div class="cta-row">' +
               '<button class="cta primary" id="mint-connect" onclick="POMmint.connect()">Connect wallet</button>' +
