@@ -106,8 +106,7 @@
         '<div class="handle" onclick="location.hash=\'#/' + a.id + '\'" style="cursor:pointer">@' + esc(a.x_handle) + (a.emblem_wallet ? ' <span class="badge-emblem">EMBLEM</span>' : '') + '</div>' +
         '<div class="meta"><span class="massv">' + fmt(a.mass) + ' <span style="color:var(--muted);font-size:11px">mass</span></span><span class="cls">' + esc(a.class_label) + '</span></div>' +
         '<div class="vit"><i style="width:' + Math.round(a.vitality * 100) + '%"></i></div>' +
-        '<button class="sharebtn" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share</button>' +
-        '<a class="sharebtn" style="margin-top:6px" href="#/mint/' + a.id + '">◈ Mint badge</a>' +
+        '<button class="sharebtn" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button>' +
       '</div>';
   }
 
@@ -139,7 +138,7 @@
         '<div class="detail" style="margin-top:18px">' +
           '<div class="stage-col"><div class="stage" style="height:auto;pointer-events:auto;background:linear-gradient(180deg,var(--panel),var(--bg));border:1px solid var(--line);border-radius:18px;padding:18px;min-height:0">' + viz + '<div style="text-align:center;margin-top:10px;font-family:var(--mono);font-size:12px;color:' + (a.is_alpha ? 'var(--alpha)' : 'var(--muted)') + '">' + (a.is_alpha ? 'ALPHA' : esc(a.class_label)) + '</div></div>' +
             '<button class="sharebtn" style="width:100%;justify-content:center;margin-top:12px;padding:11px" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button>' +
-            '<a class="sharebtn" style="width:100%;justify-content:center;margin-top:8px;padding:11px" href="#/mint/' + a.id + '">◈ Mint soulbound badge</a></div>' +
+            '<a class="sharebtn" style="width:100%;justify-content:center;margin-top:8px;padding:11px" href="#/badge">◈ About soulbound badges</a></div>' +
           '<div><h2 style="font-size:26px;margin-bottom:10px">@' + esc(a.x_handle) + '</h2>' + ids +
             '<div class="shead" style="margin-top:26px"><h2>Ledger</h2><div class="line"></div></div><div class="events">' + events + '</div>' +
           '</div>' +
@@ -367,32 +366,28 @@
   function renderBadge() {
     setActive('badge'); showField(false);
     view.innerHTML = '<div class="wrap loading">loading…</div>';
-    Promise.all([CFG ? Promise.resolve(CFG) : api('api/config'), api('api/leaderboard')]).then(function (r) {
-      CFG = CFG || r[0]; var cfg = CFG, lb = r[1], nft = cfg.nft || {};
+    (CFG ? Promise.resolve(CFG) : api('api/config')).then(function (cfg) {
+      CFG = cfg; var nft = cfg.nft || {};
       var ex = (nft.explorer || 'https://basescan.org') + '/address/' + nft.contract;
-      var cards = lb.agents.map(function (a) {
-        return '<div class="card"><div class="viz" id="bviz-' + a.short + '" onclick="location.hash=\'#/mint/' + a.id + '\'" style="cursor:pointer"></div>' +
-          '<div class="handle">@' + esc(a.x_handle) + '</div>' +
-          '<div class="meta"><span class="massv">' + fmt(a.mass) + ' <span style="color:var(--muted);font-size:11px">mass</span></span><span class="cls">' + esc(a.class_label) + '</span></div>' +
-          '<a class="sharebtn" style="margin-top:10px;width:100%;justify-content:center" href="#/mint/' + a.id + '">◈ Mint badge</a></div>';
-      }).join('');
-      view.innerHTML = '<section class="section"><div class="wrap">' +
+      var demo = V.massSVG({ mass: 600, vitality: 0.85, isAlpha: true, scaleMax: 600, uid: 'demo', size: 220, bg: '#05060a' });
+      view.innerHTML = '<section class="section"><div class="wrap join">' +
         '<div class="shead"><h2>Soulbound badges</h2><div class="line"></div></div>' +
-        '<div class="panel"><p style="color:var(--muted2);font-size:15px;margin:0">Mint a <b>soulbound</b> (non-transferable) badge on <b>Base</b> that reflects a position\'s live, PoA-derived mass. ' +
-          (nft.enabled ? 'Mint fee <b style="color:var(--alpha)">' + esc(nft.mint_fee_eth || '0') + ' ETH</b>. ' : 'Not live yet. ') + 'One badge per wallet. It stays bound to you — it can\'t be sold, only held.</p>' +
-          (nft.enabled ? '<div class="endpoint" style="margin-top:12px">Contract · <a href="' + ex + '" target="_blank" rel="noopener" style="color:var(--cyan)">' + esc(nft.contract) + '</a> · ' + esc(nft.chain) + '</div>' : '') +
-        '</div>' +
-        '<div class="shead" style="margin-top:26px"><h2>Choose a position to mint</h2><div class="line"></div></div>' +
-        (lb.agents.length ? '<div class="grid">' + cards + '</div>' : '<div class="loading">No positions yet.</div>') +
-        '</div></section>';
-      lb.agents.forEach(function (a) { var s = document.getElementById('bviz-' + a.short); if (s) s.innerHTML = V.massSVG({ mass: a.mass, vitality: a.vitality, isAlpha: a.is_alpha, scaleMax: lb.scaleMax || a.mass, uid: 'b' + a.short, size: 170 }); });
+        '<div class="panel" style="display:grid;grid-template-columns:220px 1fr;gap:26px;align-items:center">' +
+          '<div>' + demo + '<div style="text-align:center;font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px">example</div></div>' +
+          '<div>' +
+            '<p style="color:var(--muted2);font-size:15px">A <b>soulbound</b> (non-transferable) badge on <b>Base</b> that reflects <b>your own</b> position\'s live, PoA-derived mass. One per wallet, bound to you forever — it can\'t be sold, only held.</p>' +
+            '<p style="color:var(--muted2);font-size:14px;margin-top:12px">You mint a badge for the position <b>you control</b> — never anyone else\'s. Owner-verified self-mint is <b style="color:var(--alpha)">opening soon</b>: you\'ll link your Base wallet when you <a href="#/join" style="color:var(--cyan)">claim your mass</a>, and only that wallet can mint your badge.</p>' +
+            (nft.enabled ? '<div class="endpoint" style="margin-top:14px">Contract (live on ' + esc(nft.chain) + ') · <a href="' + ex + '" target="_blank" rel="noopener" style="color:var(--cyan)">' + esc(nft.contract) + '</a><br/>mint fee ' + esc(nft.mint_fee_eth || '0') + ' ETH</div>' : '<div class="endpoint" style="margin-top:14px">Not live yet.</div>') +
+            '<div class="cta-row"><a class="cta primary" href="#/join">Claim your mass first →</a></div>' +
+          '</div>' +
+        '</div></div></section>';
     }).catch(function () { view.innerHTML = '<div class="wrap loading">could not load badges.</div>'; });
   }
 
   function route() {
     var h = location.hash.replace(/^#\/?/, '');
     if (!h) return renderHome();
-    if (h.indexOf('mint/') === 0) return renderMint(h.slice(5));
+    if (h.indexOf('mint/') === 0) return renderBadge(); // open self-serve minting gated until owner-verification ships
     if (h === 'badge') return renderBadge();
     if (h === 'join') return renderJoin();
     if (h === 'protocol') return renderDoc('PROTOCOL.md', 'protocol');
