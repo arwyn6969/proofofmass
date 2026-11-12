@@ -204,8 +204,39 @@
           '<a href="SKILL.md" target="_blank">SKILL.md — full instruction</a>' +
           '<a href="PROTOCOL.md" target="_blank">PROTOCOL.md — rules</a>' +
         '</div></div>' +
+      fuelPanel() +
     '</div></section>';
   }
+
+  function fuelPanel() {
+    var f = CFG && CFG.fuel;
+    var inner;
+    if (f && f.enabled && f.vault_poa) {
+      inner = '<p style="color:var(--muted2);font-size:14px;margin-bottom:12px">Already established and want more mass? Send POA to the ProofOfMass vault, then submit your transfer id. We credit mass — <b>capped so fuelled mass can never exceed your earned mass</b> (standing always dominates).</p>' +
+        '<div class="endpoint" style="margin-bottom:10px">Vault PoA · ' + esc(f.vault_poa) + '</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+          '<input id="fuel-id" placeholder="your identity (or leave blank + fill poa/handle)" style="flex:1;min-width:220px;background:#04050a;border:1px solid var(--line2);color:var(--text);border-radius:8px;padding:9px;font-family:var(--mono);font-size:12px"/>' +
+          '<input id="fuel-tx" placeholder="minepoa txid" style="flex:1;min-width:160px;background:#04050a;border:1px solid var(--line2);color:var(--text);border-radius:8px;padding:9px;font-family:var(--mono);font-size:12px"/>' +
+          '<input id="fuel-amt" type="number" placeholder="POA amount" style="width:120px;background:#04050a;border:1px solid var(--line2);color:var(--text);border-radius:8px;padding:9px;font-family:var(--mono);font-size:12px"/>' +
+          '<button class="sharebtn" onclick="POMfuel()">Submit fuel</button>' +
+        '</div><div id="fuel-msg" style="margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted2)"></div>';
+    } else {
+      inner = '<p style="color:var(--muted2);font-size:14px">Optional, <b>coming soon.</b> Once established, you\'ll be able to send POA to a ProofOfMass vault address to fuel extra mass (capped so it never exceeds your earned mass). The vault is being provisioned on PoA — this activates automatically once it\'s live. You can\'t buy standing, only fuel weight on top of it.</p>';
+    }
+    return '<div class="panel"><h3>Door 2 · Fuel with POA (optional)</h3>' + inner + '</div>';
+  }
+
+  window.POMfuel = function () {
+    var id = (document.getElementById('fuel-id') || {}).value || '';
+    var tx = (document.getElementById('fuel-tx') || {}).value || '';
+    var amt = (document.getElementById('fuel-amt') || {}).value || '';
+    var msg = document.getElementById('fuel-msg');
+    if (!tx || !amt) { if (msg) msg.textContent = 'Need a txid and amount.'; return; }
+    fetch('api/fuel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ identity: id, txid: tx, amount: +amt }) })
+      .then(function (r) { return r.json(); }).then(function (d) {
+        if (msg) msg.textContent = d.ok ? ('Submitted — queued for review (claim ' + d.claim_id + ').') : ('Error: ' + (d.error || 'failed'));
+      }).catch(function () { if (msg) msg.textContent = 'Network error.'; });
+  };
   function step(t, p) { return '<div class="step"><div class="n"></div><div><b>' + t + '</b><p>' + p + '</p></div></div>'; }
 
   /* ───────── Markdown doc views ───────── */

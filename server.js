@@ -29,6 +29,7 @@ const API = `http://localhost:${process.env.DASHBOARD_PORT || 4000}`;
 const TOKEN = process.env.DASHBOARD_TOKEN;
 const GROUP = process.env.ARTIFACT_GROUP || 'proofofmass';
 const PUBLIC_BASE = process.env.POM_PUBLIC_BASE || 'https://mass.arwyn.party';
+const VAULT_POA = process.env.POM_VAULT_POA || null; // ProofOfMass PoA address that receives fuel deposits
 
 // ── admin token (operator review gate) — self-managed, persisted to file ──
 const ADMIN_PATH = path.join(__dirname, '.admin-token');
@@ -259,6 +260,7 @@ app.get('/api/config', (req, res) => {
       checkpoint: PUBLIC_BASE + '/api/checkpoint'
     },
     docs: { short: PUBLIC_BASE + '/go.md', full: PUBLIC_BASE + '/SKILL.md', protocol: PUBLIC_BASE + '/PROTOCOL.md', style: PUBLIC_BASE + '/STYLE.md' },
+    fuel: { enabled: !!VAULT_POA, vault_poa: VAULT_POA || null },
     experimental: true
   });
 });
@@ -530,6 +532,34 @@ app.post('/api/transfer', limit(12), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// DOOR 2 — fuel mass with POA. The agent sends POA to the ProofOfMass vault on
+// minepoa, then submits the txid here. Review-gated (minepoa doesn't publish the
+// transfer schema, so an operator confirms the tx on minepoa's explorer). Capped
+// so fueled mass can never exceed earned mass (earned-agency always dominates).
+app.post('/api/fuel', limit(12), async (req, res) => {
+  try {
+    if (!VAULT_POA) return res.status(503).json({ error: 'fueling_not_enabled', note: 'ProofOfMass PoA vault is not provisioned yet.' });
+    const id = str(req.body.identity, 80) || identityId(str(req.body.poa_address, 120), req.body.x_handle);
+    const txid = str(req.body.txid, 120);
+    const amount = clamp(+req.body.amount || 0, 0, 1e9);
+    if (!id || !txid || amount <= 0) return res.status(400).json({ error: 'need identity, txid and amount > 0' });
+    const a = await getAgent(id);
+    if (!a || a.status !== 'active') return res.status(400).json({ error: 'fuel target must be an active position' });
+    const dup = await dbQuery('SELECT id FROM pom_claims WHERE ref = ? LIMIT 1', [txid]);
+    if (dup.length) return res.status(409).json({ error: 'txid already submitted' });
+    const claimId = 'c_' + crypto.randomBytes(8).toString('hex');
+    await serialize(function () {
+      return dbExec('INSERT INTO pom_claims (id, identity, poa_address, x_handle, poa_answer, requested_amount, kind, ref, status) VALUES (?,?,?,?,?,?,?,?,?)',
+        [claimId, id, a.poa_address, a.x_handle, 'POA fuel deposit', amount, 'fuel', txid, 'pending_review']);
+    });
+    res.json({
+      ok: true, claim_id: claimId, kind: 'fuel', identity: id, txid, amount, status: 'pending_review',
+      verify_on: 'https://minepoa.com/api/explorer/tx/' + encodeURIComponent(txid),
+      note: 'Operator will confirm your POA transfer to the vault on minepoa, then credit mass (capped so fuel never exceeds your earned mass).'
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 /* ──────────────────────── REVIEW (operator gate) ────────────────────────
  * Review-first for any value-moving action. Requires the admin token. This is
  * the only path that credits/moves mass. Keeps humans out of the claim path
@@ -563,6 +593,20 @@ async function applyApproval(c, amount, note) {
     await dbExec('UPDATE pom_claims SET status=?, reviewer_note=?, reviewed_at=? WHERE id=?', ['approved', note, nowISO(), c.id]);
     return { ok: true, status: 'approved', kind: 'transfer', amount, from_mass: Math.max(0, fromNew), to_mass: toNew, merged };
   }
+  if (c.kind === 'fuel') {
+    const f = await getAgent(c.identity);
+    if (!f || f.status !== 'active') throw new Error('fuel target not active');
+    const earned = f.mass - f.fueled;                 // earned-agency portion
+    const allowed = Math.max(0, earned - f.fueled);    // cap: fueled total ≤ earned total
+    const credited = Math.min(amount, allowed);
+    if (credited <= 0) throw new Error('fuel cap reached — fueled mass cannot exceed earned mass');
+    const newMass = f.mass + credited, newFuel = f.fueled + credited;
+    await dbExec('UPDATE pom_agents SET mass=?, fueled=?, vitality=1.0, last_active_at=? WHERE id=?', [newMass, newFuel, nowISO(), f.id]);
+    await appendEvent({ type: 'fuel', identity: f.id, amount: credited, mass_after: newMass, note: note || ('POA fuel credited (tx ' + (c.ref || '').slice(0, 10) + ')') });
+    await dbExec('UPDATE pom_claims SET status=?, reviewer_note=?, reviewed_at=? WHERE id=?', ['approved', note, nowISO(), c.id]);
+    return { ok: true, status: 'approved', kind: 'fuel', identity: f.id, credited: credited, mass: newMass, fueled: newFuel };
+  }
+
   // kind: claim — credit mass into the single position (consolidation)
   const a = await getAgent(c.identity);
   if (!a) throw new Error('identity missing');
@@ -598,7 +642,7 @@ app.post('/api/admin/review', requireAdmin, async (req, res) => {
     }
     if (action !== 'approve') return res.status(400).json({ error: 'action must be approve or reject' });
 
-    const amount = clamp(+req.body.amount || (c.kind === 'transfer' ? c.requested_amount : 10), 0, 1e9);
+    const amount = clamp(+req.body.amount || (c.kind === 'transfer' || c.kind === 'fuel' ? c.requested_amount : 10), 0, 1e9);
     const out = await serialize(() => applyApproval(c, amount, note));
     res.json(out);
   } catch (e) { res.status(400).json({ error: e.message }); }
