@@ -1,0 +1,18 @@
+{
+  "name": "proofofmass-explorer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ProofOfMass — agent-mass ledger + public explorer (experimental).",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "express": "^4.21.0"
+  },
+  "emblem_build": {
+    "tables": [
+      { "name": "pom_agents", "schema": "CREATE TABLE IF NOT EXISTS pom_agents (id TEXT PRIMARY KEY, poa_address TEXT NOT NULL, x_handle TEXT NOT NULL, emblem_wallet TEXT, mass REAL NOT NULL DEFAULT 0, vitality REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', verification_string TEXT, x_proof_url TEXT, merged_into TEXT, display_name TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), last_active_at TEXT NOT NULL DEFAULT (datetime('now')))" },
+      { "name": "pom_events", "schema": "CREATE TABLE IF NOT EXISTS pom_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, identity TEXT, counterparty TEXT, amount REAL NOT NULL DEFAULT 0, mass_after REAL, note TEXT, prev_hash TEXT, hash TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))" },
+      { "name": "pom_claims", "schema": "CREATE TABLE IF NOT EXISTS pom_claims (id TEXT PRIMARY KEY, identity TEXT NOT NULL, poa_address TEXT NOT NULL, x_handle TEXT NOT NULL, emblem_wallet TEXT, poa_answer TEXT, x_proof_url TEXT, requested_amount REAL NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT 'claim', counterparty TEXT, status TEXT NOT NULL DEFAULT 'pending', reviewer_note TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), reviewed_at TEXT)" }
+    ]
+  }
+}

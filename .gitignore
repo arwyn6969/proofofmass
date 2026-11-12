@@ -1,0 +1,7 @@
+node_modules/
+.checkpoint-key.json
+.admin-token
+.env
+.env.*
+*.log
+.DS_Store
