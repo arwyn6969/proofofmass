@@ -402,9 +402,68 @@
     }).catch(function () { view.innerHTML = '<div class="wrap loading">could not load badges.</div>'; });
   }
 
+  /* ───────── Operator admin panel (token-gated, client-side) ───────── */
+  function renderAdmin() {
+    setActive(''); showField(false);
+    var tok = localStorage.getItem('pom_admin') || '';
+    view.innerHTML = '<section class="section"><div class="wrap">' +
+      '<div class="shead"><h2>Operator review</h2><div class="line"></div></div>' +
+      '<div class="panel"><h3>Admin token</h3>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><input id="adm-tok" type="password" placeholder="x-admin-token" value="' + esc(tok) + '" style="flex:1;min-width:240px;background:#04050a;border:1px solid var(--line2);color:var(--text);border-radius:8px;padding:9px;font-family:var(--mono);font-size:12px"/>' +
+        '<button class="cta primary" onclick="POMadmin.load()">Load queue</button></div>' +
+        '<div style="color:var(--muted);font-size:12px;margin-top:8px">Stored only in your browser. The queue stays empty unless the token is valid.</div>' +
+      '</div><div id="adm-queue"></div></div></section>';
+    if (tok) POMadmin.load();
+  }
+  var POMadmin = {
+    tok: function () { return (document.getElementById('adm-tok') || {}).value || ''; },
+    load: async function () {
+      var t = this.tok(); if (!t) return; localStorage.setItem('pom_admin', t);
+      var el = document.getElementById('adm-queue'); el.innerHTML = '<div class="loading">loading…</div>';
+      try {
+        var r = await fetch('api/admin/queue', { headers: { 'x-admin-token': t } });
+        if (r.status === 401) { el.innerHTML = '<div class="panel" style="border-color:rgba(255,107,107,.3)">Invalid token.</div>'; return; }
+        var d = await r.json();
+        if (!d.claims || !d.claims.length) { el.innerHTML = '<div class="panel"><p style="color:var(--muted2);margin:0">No claims awaiting review. 🎉 (Agents with a verified wallet link auto-approve instantly.)</p></div>'; return; }
+        el.innerHTML = '<div class="shead" style="margin-top:20px"><h2>' + d.claims.length + ' awaiting review</h2><div class="line"></div></div>' + d.claims.map(function (c) { return POMadmin.card(c); }).join('');
+      } catch (e) { el.innerHTML = '<div class="panel">Error: ' + esc(e.message) + '</div>'; }
+    },
+    card: function (c) {
+      var x = c.auto_x || {}, p = c.auto_poa || {};
+      var epochs = (p.open_epoch != null && p.since_epoch != null) ? Math.max(0, p.open_epoch - p.since_epoch) : 0;
+      var sg = Math.max(10, Math.min(300, Math.round((10 + epochs * 2) * (p.control_proven ? 1.25 : 1))));
+      var chk = function (ok, label) { return '<span style="color:' + (ok ? 'var(--green)' : 'var(--muted)') + '">' + (ok ? '✓' : '○') + ' ' + label + '</span>'; };
+      return '<div class="panel" style="margin-top:12px">' +
+        '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px"><b style="color:#fff">@' + esc(c.x_handle) + '</b><span style="font-family:var(--mono);font-size:11px;color:var(--muted)">' + esc(c.kind) + ' · ' + esc(c.id) + '</span></div>' +
+        '<div style="font-family:var(--mono);font-size:12px;margin:10px 0;display:flex;gap:14px;flex-wrap:wrap">' +
+          chk(x.handle_match && x.string_match, 'X post') + chk(p.established, 'PoA established' + (p.since_epoch != null ? ' (epoch ' + p.since_epoch + ')' : '')) + chk(p.control_proven, 'control proven') +
+        '</div>' +
+        (c.x_proof_url ? '<div style="font-size:12px;margin-bottom:8px"><a href="' + esc(c.x_proof_url) + '" target="_blank" rel="noopener" style="color:var(--cyan)">view X proof →</a></div>' : '') +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+          '<input id="amt-' + c.id + '" type="number" placeholder="amount (' + sg + ')" style="width:140px;background:#04050a;border:1px solid var(--line2);color:var(--text);border-radius:8px;padding:8px;font-family:var(--mono);font-size:12px"/>' +
+          '<button class="sharebtn" style="border-color:rgba(88,227,155,.4);color:var(--green)" onclick="POMadmin.act(\'' + c.id + '\',\'approve\')">Approve</button>' +
+          '<button class="sharebtn" style="border-color:rgba(255,107,107,.4);color:var(--red)" onclick="POMadmin.act(\'' + c.id + '\',\'reject\')">Reject</button>' +
+          '<span id="res-' + c.id + '" style="font-family:var(--mono);font-size:12px;color:var(--muted2)"></span>' +
+        '</div></div>';
+    },
+    act: async function (id, action) {
+      var t = this.tok(); var amtEl = document.getElementById('amt-' + id); var amount = amtEl && amtEl.value ? +amtEl.value : undefined;
+      var res = document.getElementById('res-' + id); if (res) res.textContent = '…';
+      try {
+        var body = { claim_id: id, action: action }; if (amount) body.amount = amount;
+        var r = await fetch('api/admin/review', { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': t }, body: JSON.stringify(body) });
+        var d = await r.json();
+        if (res) res.innerHTML = d.ok ? '<span style="color:var(--green)">' + (action === 'approve' ? ('approved · mass ' + (d.mass != null ? d.mass : '')) : 'rejected') + '</span>' : '<span style="color:var(--red)">' + esc(d.error || 'failed') + '</span>';
+        if (d.ok) setTimeout(function () { POMadmin.load(); }, 1000);
+      } catch (e) { if (res) res.textContent = 'error'; }
+    }
+  };
+  window.POMadmin = POMadmin;
+
   function route() {
     var h = location.hash.replace(/^#\/?/, '');
     if (!h) return renderHome();
+    if (h === 'admin') return renderAdmin();
     if (h.indexOf('mint/') === 0) return renderMint(h.slice(5)); // owner-gated: only a position's linked wallet can mint
     if (h === 'badge') return renderBadge();
     if (h === 'join') return renderJoin();
