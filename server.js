@@ -162,6 +162,7 @@ function shapeAgent(a, scaleMax, isAlpha) {
     status: a.status,
     merged_into: a.merged_into || null,
     seed: !!a.seed,
+    base_wallet: a.base_wallet || null,
     created_at: a.created_at,
     last_active_at: a.last_active_at,
     scaleMax
@@ -213,6 +214,25 @@ async function poaEstablished(address) {
   var d = await autoVerifyPoA(address);
   poaCache.set(address, { t: Date.now(), data: d });
   return d;
+}
+
+// Minepoa's public chain-link map proves an agent CONTROLS its PoA address: the
+// agent signed `poa-owns:<addr>` with its EVM/Solana key and minepoa verified it
+// on-ledger. A verified EVM link both (a) proves PoA control and (b) gives the
+// exact Base wallet allowed to mint the badge. Cached 30m.
+let chainsCache = null;
+async function poaChains(address) {
+  try {
+    if (!chainsCache || Date.now() - chainsCache.t > 1800000) {
+      const r = await fetch('https://minepoa.com/api/chains', { signal: AbortSignal.timeout(15000) });
+      if (r.ok) chainsCache = { t: Date.now(), map: await r.json() }; // keep stale cache on failure
+    }
+    const e = chainsCache && chainsCache.map ? chainsCache.map[address] : null;
+    if (!e) return { control_proven: false, verified_evm: null, verified_solana: null };
+    const evm = e.ethereum && e.ethereum.verified ? String(e.ethereum.addr).toLowerCase() : null;
+    const sol = e.solana && e.solana.verified ? e.solana.addr : null;
+    return { control_proven: !!(evm || sol), verified_evm: evm, verified_solana: sol };
+  } catch (e) { return { control_proven: false, verified_evm: null, verified_solana: null }; }
 }
 
 // ── very small in-memory rate limiter for write endpoints ──
@@ -355,6 +375,8 @@ app.get('/api/agent/:id', async (req, res) => {
     const events = await dbQuery('SELECT seq, type, amount, mass_after, note, created_at, hash FROM pom_events WHERE identity = ? OR counterparty = ? ORDER BY seq DESC LIMIT 40', [a.id, a.id]);
     const isAlpha = a.status === 'active' && a.mass === am && am > 0;
     const poa = await poaEstablished(a.poa_address).catch(function () { return null; });
+    const chains = await poaChains(a.poa_address).catch(function () { return null; });
+    if (poa && chains) { poa.control_proven = chains.control_proven; poa.verified_evm = chains.verified_evm; }
     res.json({ agent: shapeAgent(a, am || a.mass, isAlpha), events, poa });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -475,6 +497,11 @@ app.post('/api/badge/record', limit(20), async (req, res) => {
     if (!owner || owner.toLowerCase() !== wallet) return res.status(400).json({ error: 'wallet does not own that token on-chain' });
     const a = await getAgent(identity);
     if (!a) return res.status(404).json({ error: 'identity not found' });
+    // OWNER-VERIFIED: the position must have linked a Base wallet, and the minter
+    // must BE that wallet. This makes it impossible to mint a badge for a position
+    // you don't control (and unmintable for seeds/others, which have no linked wallet).
+    if (!a.base_wallet) return res.status(403).json({ error: 'this position has not linked a Base wallet; its badge cannot be minted' });
+    if (a.base_wallet.toLowerCase() !== wallet) return res.status(403).json({ error: 'only the position\'s linked wallet may mint its badge' });
     // immutable first-write: a token can't be re-pointed once bound (anti-hijack)
     const existing = await dbQuery('SELECT identity FROM pom_badges WHERE token_id = ?', [tokenId]);
     if (existing.length && existing[0].identity && existing[0].identity !== identity) return res.status(409).json({ error: 'token already bound to another position' });
@@ -495,6 +522,8 @@ app.post('/api/claim', limit(12), async (req, res) => {
     const wallet = str(req.body.emblem_wallet, 120) || null;
     const answer = str(req.body.poa_answer, 2000);
     const name = str(req.body.display_name, 60) || null;
+    let baseWallet = str(req.body.base_wallet, 60).toLowerCase() || null; // Base wallet that may mint this badge
+    if (baseWallet && !/^0x[0-9a-f]{40}$/.test(baseWallet)) return res.status(400).json({ error: 'base_wallet must be a 0x EVM address' });
     if (!poa || !handle) return res.status(400).json({ error: 'poa_address and x_handle required' });
     if (answer.length < 40) return res.status(400).json({ error: 'poa_answer must be a substantive answer in the agent\'s own words (min 40 chars)' });
 
@@ -505,12 +534,12 @@ app.post('/api/claim', limit(12), async (req, res) => {
     await serialize(async () => {
       const agent = await getAgent(id);
       if (!agent) {
-        await dbExec('INSERT INTO pom_agents (id, poa_address, x_handle, emblem_wallet, display_name, mass, vitality, status, verification_string) VALUES (?,?,?,?,?,0,0,?,?)',
-          [id, poa, handle, wallet, name, 'pending', vstr]);
+        await dbExec('INSERT INTO pom_agents (id, poa_address, x_handle, emblem_wallet, base_wallet, display_name, mass, vitality, status, verification_string) VALUES (?,?,?,?,?,?,0,0,?,?)',
+          [id, poa, handle, wallet, baseWallet, name, 'pending', vstr]);
         await appendEvent({ type: 'genesis', identity: id, amount: 0, mass_after: 0, note: 'position opened (pending review)' });
       } else {
         // existing identity: this is a consolidation/credit request into the SAME single position
-        await dbExec('UPDATE pom_agents SET verification_string = ?, emblem_wallet = COALESCE(?, emblem_wallet), display_name = COALESCE(?, display_name) WHERE id = ?', [vstr, wallet, name, id]);
+        await dbExec('UPDATE pom_agents SET verification_string = ?, emblem_wallet = COALESCE(?, emblem_wallet), base_wallet = COALESCE(?, base_wallet), display_name = COALESCE(?, display_name) WHERE id = ?', [vstr, wallet, baseWallet, name, id]);
       }
       await dbExec('INSERT INTO pom_claims (id, identity, poa_address, x_handle, emblem_wallet, poa_answer, requested_amount, kind, status) VALUES (?,?,?,?,?,?,?,?,?)',
         [claimId, id, poa, handle, wallet, answer, 0, 'claim', 'pending_proof']);
@@ -556,6 +585,15 @@ app.post('/api/claim/:id/proof', limit(20), async (req, res) => {
 
     // Automated checks (network; run outside the write lock). They INFORM review.
     const [xRes, poaRes] = await Promise.all([ autoVerifyX(url, subjectHandle, subjectVstr), autoVerifyPoA(c.poa_address) ]);
+    // PoA CONTROL proof via minepoa's verified chain links (signed poa-owns:<addr>).
+    const chains = await poaChains(c.poa_address);
+    poaRes.control_proven = chains.control_proven;
+    poaRes.verified_evm = chains.verified_evm;
+    // If the PoA has a minepoa-verified EVM link, adopt it as the authoritative mint
+    // wallet (strongest binding — you can only mint from the wallet you proved to minepoa).
+    if (chains.verified_evm && c.kind === 'claim') {
+      await dbExec('UPDATE pom_agents SET base_wallet = ? WHERE id = ?', [chains.verified_evm, c.identity]);
+    }
     await dbExec('UPDATE pom_claims SET auto_x=?, auto_poa=?, auto_checked_at=? WHERE id=?', [JSON.stringify(xRes), JSON.stringify(poaRes), nowISO(), c.id]);
 
     // Optional: auto-approve only when BOTH automated checks pass AND the operator
@@ -810,7 +848,7 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'not_found', path: r
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-const server = app.listen(PORT, () => { console.log('ProofOfMass explorer on ' + PORT + ' (group ' + GROUP + ')'); seedIfEmpty(); });
+const server = app.listen(PORT, () => { console.log('ProofOfMass explorer on ' + PORT + ' (group ' + GROUP + ')'); seedIfEmpty(); poaChains('warm').catch(function () {}); });
 server.on('error', (e) => { console.error('listen error:', e.code || e.message); process.exit(1); });
 
 // Exit cleanly on platform restart (code 0, not a signal) so status stays healthy.

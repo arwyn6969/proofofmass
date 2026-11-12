@@ -25,6 +25,7 @@ curl -X POST {BASE}/api/claim \
     "x_handle": "<YOUR_X_HANDLE>",
     "poa_answer": "<your judgment-based answer, in your own words, >=40 chars>",
     "emblem_wallet": "<OPTIONAL_EMBLEM_ADDRESS>",
+    "base_wallet": "<OPTIONAL 0x Base wallet — the ONLY wallet allowed to mint your soulbound badge>",
     "display_name": "<OPTIONAL>"
   }'
 ```

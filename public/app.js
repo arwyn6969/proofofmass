@@ -121,10 +121,14 @@
       var poaVal = d.poa && d.poa.established
         ? '<span style="color:var(--green)">● established' + (d.poa.since_epoch != null ? ' · epoch ' + d.poa.since_epoch : '') + '</span>'
         : (d.poa ? '<span style="color:var(--muted)">○ not established</span>' : '<span style="color:var(--muted)">—</span>');
+      var controlVal = d.poa && d.poa.control_proven
+        ? '<span style="color:var(--green)">✓ proven' + (d.poa.verified_evm ? ' · EVM ' + esc(d.poa.verified_evm.slice(0, 6) + '…' + d.poa.verified_evm.slice(-4)) : '') + '</span>'
+        : '<span style="color:var(--muted)">○ not linked on PoA</span>';
       var ids = '' +
         row('X (Twitter)', '<a href="https://x.com/' + esc(a.x_handle) + '" target="_blank" rel="noopener">@' + esc(a.x_handle) + '</a>') +
         row('PoA address', '<a href="https://minepoa.com" target="_blank" rel="noopener">' + esc(a.poa_short) + '</a>') +
         row('PoA standing', poaVal) +
+        row('PoA control', controlVal) +
         (a.emblem_wallet ? row('Emblem', esc(a.emblem_wallet)) : '') +
         row('Mass', '<b style="color:#fff">' + fmt(a.mass) + '</b>') +
         row('Class', esc(a.class_label)) +
@@ -139,7 +143,7 @@
         '<div class="detail" style="margin-top:18px">' +
           '<div class="stage-col"><div class="stage" style="height:auto;pointer-events:auto;background:linear-gradient(180deg,var(--panel),var(--bg));border:1px solid var(--line);border-radius:18px;padding:18px;min-height:0">' + viz + '<div style="text-align:center;margin-top:10px;font-family:var(--mono);font-size:12px;color:' + (a.is_alpha ? 'var(--alpha)' : 'var(--muted)') + '">' + (a.is_alpha ? 'ALPHA' : esc(a.class_label)) + '</div></div>' +
             '<button class="sharebtn" style="width:100%;justify-content:center;margin-top:12px;padding:11px" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button>' +
-            '<a class="sharebtn" style="width:100%;justify-content:center;margin-top:8px;padding:11px" href="#/badge">◈ About soulbound badges</a></div>' +
+            '<a class="sharebtn" style="width:100%;justify-content:center;margin-top:8px;padding:11px" href="' + (a.base_wallet ? '#/mint/' + a.id : '#/badge') + '">◈ ' + (a.base_wallet ? 'Mint this badge' : 'About soulbound badges') + '</a></div>' +
           '<div><h2 style="font-size:26px;margin-bottom:10px">@' + esc(a.x_handle) + '</h2>' + ids +
             '<div class="shead" style="margin-top:26px"><h2>Ledger</h2><div class="line"></div></div><div class="events">' + events + '</div>' +
           '</div>' +
@@ -288,7 +292,7 @@
   }
   var POMmint = {
     cfg: null, identity: null, provider: null, signer: null, account: null,
-    init: function (nft, id) { this.cfg = nft; this.identity = id; },
+    init: function (nft, id, reqWallet) { this.cfg = nft; this.identity = id; this.reqWallet = (reqWallet || '').toLowerCase() || null; },
     status: function (m) { var e = document.getElementById('mint-status'); if (e) e.innerHTML = m; },
     connect: async function () {
       try {
@@ -299,6 +303,10 @@
         this.provider = new ethers.BrowserProvider(window.ethereum);
         this.signer = await this.provider.getSigner();
         this.account = await this.signer.getAddress();
+        if (this.reqWallet && this.account.toLowerCase() !== this.reqWallet) {
+          this.status('Wrong wallet. This position is linked to <b>' + this.reqWallet.slice(0, 6) + '…' + this.reqWallet.slice(-4) + '</b> — connect that wallet to mint its badge.');
+          return;
+        }
         this.status('Connected ' + this.account.slice(0, 6) + '…' + this.account.slice(-4) + ' — ready to mint.');
         var cbtn = document.getElementById('mint-connect'), gbtn = document.getElementById('mint-go');
         if (cbtn) cbtn.style.display = 'none'; if (gbtn) gbtn.style.display = 'inline-flex';
@@ -343,24 +351,27 @@
       CFG = CFG || r[0]; var cfg = CFG, a = r[1].agent;
       if (!cfg.nft || !cfg.nft.enabled) { view.innerHTML = '<section class="section"><div class="wrap loading">Badge minting isn\'t enabled yet.</div></section>'; return; }
       var viz = V.massSVG({ mass: a.mass, vitality: a.vitality, isAlpha: a.is_alpha, scaleMax: a.scaleMax || a.mass, uid: a.short, size: 280, bg: '#05060a' });
-      var testnet = cfg.nft.chain === 'base-sepolia';
-      var feeTxt = cfg.nft.mint_fee_eth ? '<span style="color:var(--alpha)">Mint fee: ' + esc(cfg.nft.mint_fee_eth) + ' ETH on Base.</span>' : (testnet ? '<span style="color:var(--alpha)">Testnet — free to mint.</span>' : '');
+      var feeTxt = cfg.nft.mint_fee_eth ? '<span style="color:var(--alpha)">Mint fee: ' + esc(cfg.nft.mint_fee_eth) + ' ETH on Base.</span>' : '';
+      var linked = a.base_wallet;
+      var action = linked
+        ? '<p style="color:var(--muted2);font-size:13px;margin:4px 0 10px">Linked wallet: <span style="font-family:var(--mono);color:var(--cyan)">' + esc(linked.slice(0, 6) + '…' + linked.slice(-4)) + '</span> — only this wallet can mint.</p>' +
+          '<div class="cta-row">' +
+            '<button class="cta primary" id="mint-connect" onclick="POMmint.connect()">Connect wallet</button>' +
+            '<button class="cta" id="mint-go" onclick="POMmint.mint()" style="display:none">◈ Mint badge</button>' +
+          '</div><div id="mint-status" style="margin-top:12px;font-family:var(--mono);font-size:12px;color:var(--muted2);line-height:1.7"></div>'
+        : '<div class="endpoint" style="margin-top:10px;border-color:rgba(255,210,122,.3)">⚠ This position hasn\'t linked a Base wallet, so its badge can\'t be minted. Only a position\'s <b>own linked wallet</b> may mint its badge — ' + (a.seed ? 'genesis/demo positions can\'t be minted.' : 'the owner links it when claiming.') + '</div>';
       view.innerHTML = '<section class="section"><div class="wrap join">' +
         '<a href="#/' + a.id + '" style="color:var(--muted);font-family:var(--mono);font-size:12px">← back to position</a>' +
         '<div class="shead" style="margin-top:14px"><h2>Mint soulbound badge</h2><div class="line"></div></div>' +
         '<div class="panel" style="display:grid;grid-template-columns:280px 1fr;gap:24px;align-items:center">' +
           '<div>' + viz + '</div>' +
-          '<div><h3 style="border:none;margin:0 0 8px;letter-spacing:0;text-transform:none;font-size:22px;color:#fff">@' + esc(a.x_handle) + '</h3>' +
-            '<p style="color:var(--muted2);font-size:14px">A <b>soulbound</b> (non-transferable) badge on <b>Base</b> that reflects this position\'s live, PoA-derived mass. One per wallet. ' + feeTxt + '</p>' +
+          '<div><h3 style="border:none;margin:0 0 8px;letter-spacing:0;text-transform:none;font-size:22px;color:#fff">@' + esc(a.x_handle) + (a.seed ? ' <span class="badge-seed">genesis</span>' : '') + '</h3>' +
+            '<p style="color:var(--muted2);font-size:14px">A <b>soulbound</b> (non-transferable) badge on <b>Base</b> that reflects this position\'s live, PoA-derived mass. One per wallet, bound to you forever. ' + feeTxt + '</p>' +
             '<div class="endpoint" style="margin:10px 0;font-size:11px">' + esc(cfg.nft.contract) + '</div>' +
-            '<div class="cta-row">' +
-              '<button class="cta primary" id="mint-connect" onclick="POMmint.connect()">Connect wallet</button>' +
-              '<button class="cta" id="mint-go" onclick="POMmint.mint()" style="display:none">◈ Mint badge</button>' +
-            '</div>' +
-            '<div id="mint-status" style="margin-top:12px;font-family:var(--mono);font-size:12px;color:var(--muted2);line-height:1.7"></div>' +
+            action +
           '</div>' +
         '</div></div></section>';
-      POMmint.init(cfg.nft, a.id);
+      if (linked) POMmint.init(cfg.nft, a.id, linked);
     }).catch(function () { view.innerHTML = '<div class="wrap loading">Could not load mint page.</div>'; });
   }
 
@@ -388,7 +399,7 @@
   function route() {
     var h = location.hash.replace(/^#\/?/, '');
     if (!h) return renderHome();
-    if (h.indexOf('mint/') === 0) return renderBadge(); // open self-serve minting gated until owner-verification ships
+    if (h.indexOf('mint/') === 0) return renderMint(h.slice(5)); // owner-gated: only a position's linked wallet can mint
     if (h === 'badge') return renderBadge();
     if (h === 'join') return renderJoin();
     if (h === 'protocol') return renderDoc('PROTOCOL.md', 'protocol');
