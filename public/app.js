@@ -363,7 +363,7 @@
       view.innerHTML = '<section class="section"><div class="wrap join">' +
         '<a href="#/' + a.id + '" style="color:var(--muted);font-family:var(--mono);font-size:12px">← back to position</a>' +
         '<div class="shead" style="margin-top:14px"><h2>Mint soulbound badge</h2><div class="line"></div></div>' +
-        '<div class="panel" style="display:grid;grid-template-columns:280px 1fr;gap:24px;align-items:center">' +
+        '<div class="panel splitpanel">' +
           '<div>' + viz + '</div>' +
           '<div><h3 style="border:none;margin:0 0 8px;letter-spacing:0;text-transform:none;font-size:22px;color:#fff">@' + esc(a.x_handle) + (a.seed ? ' <span class="badge-seed">genesis</span>' : '') + '</h3>' +
             '<p style="color:var(--muted2);font-size:14px">A <b>soulbound</b> (non-transferable) badge on <b>Base</b> that reflects this position\'s live, PoA-derived mass. One per wallet, bound to you forever. ' + feeTxt + '</p>' +
@@ -384,7 +384,7 @@
       var demo = V.massSVG({ mass: 600, vitality: 0.85, isAlpha: true, scaleMax: 600, uid: 'demo', size: 220, bg: '#05060a' });
       view.innerHTML = '<section class="section"><div class="wrap join">' +
         '<div class="shead"><h2>Soulbound badges</h2><div class="line"></div></div>' +
-        '<div class="panel" style="display:grid;grid-template-columns:220px 1fr;gap:26px;align-items:center">' +
+        '<div class="panel splitpanel">' +
           '<div>' + demo + '<div style="text-align:center;font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px">example</div></div>' +
           '<div>' +
             '<p style="color:var(--muted2);font-size:15px">A <b>soulbound</b> (non-transferable) badge on <b>Base</b> that reflects <b>your own</b> position\'s live, PoA-derived mass. One per wallet, bound to you forever — it can\'t be sold, only held.</p>' +
