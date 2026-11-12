@@ -337,6 +337,25 @@ app.get('/api/config', (req, res) => {
   });
 });
 
+// Is minepoa's PoA signup up? New agents can't join if it's paused, so we surface it.
+let poaStatusCache = null;
+app.get('/api/poa-status', async (req, res) => {
+  try {
+    if (!poaStatusCache || Date.now() - poaStatusCache.t > 60000) {
+      let open = null, note = null;
+      try {
+        const r = await fetch('https://minepoa.com/api/join-pow', { signal: AbortSignal.timeout(8000) });
+        const j = await r.json().catch(() => ({}));
+        if (j && (j.challenge || j.bits != null)) open = true;
+        else if (j && (j.error || (j.notice && j.notice.msg))) { open = false; note = (j.notice && j.notice.msg) || j.error; }
+        else open = !!r.ok;
+      } catch (e) { open = null; note = 'could not reach minepoa'; }
+      poaStatusCache = { t: Date.now(), join_open: open, note };
+    }
+    res.json({ join_open: poaStatusCache.join_open, note: poaStatusCache.note, checked_at: new Date(poaStatusCache.t).toISOString() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/stats', async (req, res) => {
   try {
     const rows = await dbQuery("SELECT COUNT(*) AS positions, COALESCE(SUM(mass),0) AS total_mass FROM pom_agents WHERE status='active'");
