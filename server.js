@@ -217,8 +217,18 @@ async function autoVerifyPoA(address) {
     const r = await fetch('https://minepoa.com/api/established/' + encodeURIComponent(address), { signal: AbortSignal.timeout(8000) });
     if (!r.ok) return { ok: false, reason: 'established ' + r.status, checked: true };
     const j = await r.json();
-    return { ok: !!j.established, established: !!j.established, since_epoch: (j.since_epoch != null ? j.since_epoch : null), in_prior_set: (j.in_prior_set != null ? j.in_prior_set : null), checked: true };
+    return { ok: !!j.established, established: !!j.established, since_epoch: (j.since_epoch != null ? j.since_epoch : null), open_epoch: (j.open_epoch != null ? j.open_epoch : null), in_prior_set: (j.in_prior_set != null ? j.in_prior_set : null), checked: true };
   } catch (e) { return { ok: false, reason: String(e.message || e), checked: true }; }
+}
+
+// Mass pegged to PoA standing: base grant scales with epochs established (earned,
+// not arbitrary), with a bonus for cryptographically control-proven identities.
+function standingGrant(poaRes) {
+  if (!poaRes || !poaRes.established) return 10;
+  const epochs = (poaRes.open_epoch != null && poaRes.since_epoch != null) ? Math.max(0, poaRes.open_epoch - poaRes.since_epoch) : 0;
+  let g = 10 + epochs * 2;              // ~2 mass per epoch of standing
+  if (poaRes.control_proven) g = g * 1.25; // verified-control bonus
+  return Math.max(10, Math.min(300, Math.round(g)));
 }
 
 // Cached PoA establishment lookup (1h TTL) so profile views don't hammer minepoa.
@@ -621,7 +631,10 @@ app.post('/api/claim/:id/proof', limit(20), async (req, res) => {
     // link on minepoa). Everything else falls to manual review — you can't auto-claim
     // against a PoA address you don't demonstrably control.
     if (AUTO_APPROVE && xRes.ok && poaRes.ok && poaRes.control_proven) {
-      const amount = clamp(c.kind === 'transfer' ? c.requested_amount : 10, 0, 1e9);
+      let amt;
+      if (c.kind === 'transfer' || c.kind === 'fuel') amt = c.requested_amount;
+      else { const ag = await getAgent(c.identity); amt = (ag && ag.status === 'active') ? 5 : standingGrant(poaRes); }
+      const amount = clamp(amt, 0, 1e9);
       try {
         const out = await serialize(() => applyApproval(c, amount, 'auto-approved: X post + PoA established verified'));
         return res.json({ ok: true, claim_id: c.id, auto_approved: true, x: xRes, poa: poaRes, result: out });
@@ -822,7 +835,12 @@ app.post('/api/admin/review', requireAdmin, async (req, res) => {
     }
     if (action !== 'approve') return res.status(400).json({ error: 'action must be approve or reject' });
 
-    const amount = clamp(+req.body.amount || (c.kind === 'transfer' || c.kind === 'fuel' ? c.requested_amount : 10), 0, 1e9);
+    let amt = +req.body.amount;
+    if (!amt) {
+      if (c.kind === 'transfer' || c.kind === 'fuel') amt = c.requested_amount;
+      else { const ag = await getAgent(c.identity); amt = (ag && ag.status === 'active') ? 5 : standingGrant(parseJSON(c.auto_poa)); }
+    }
+    const amount = clamp(amt, 0, 1e9);
     const out = await serialize(() => applyApproval(c, amount, note));
     res.json(out);
   } catch (e) { res.status(400).json({ error: e.message }); }
