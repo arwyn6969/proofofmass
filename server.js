@@ -572,9 +572,6 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'not_found', path: r
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-// Evict any stale holder of our port (restart races) so we bind cleanly.
-try { require('child_process').execSync(`lsof -ti :${PORT} | xargs -r kill -9`, { stdio: 'ignore' }); } catch (e) { /* lsof may be absent; listen error handler covers it */ }
-
 const server = app.listen(PORT, () => { console.log('ProofOfMass explorer on ' + PORT + ' (group ' + GROUP + ')'); seedIfEmpty(); });
 server.on('error', (e) => { console.error('listen error:', e.code || e.message); process.exit(1); });
 
