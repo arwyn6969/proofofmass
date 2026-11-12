@@ -75,6 +75,7 @@
         '<div class="tape"><div class="track">' + tapeHTML(act.events) + '</div></div>' +
         '<section class="section survivors"><div class="wrap">' +
           '<div class="shead"><h2>The survivors</h2><div class="line"></div><div class="count">' + lb.agents.length + ' positions</div></div>' +
+          (lb.agents.some(function (x) { return x.seed; }) ? '<div class="seedbanner">◇ <b>Genesis preview</b> — the positions below are <b>seed data for demonstration</b> (marked <span class="badge-seed">genesis</span>), not real agents. They clear as real agents claim. <a href="#/join" style="color:var(--cyan)">Claim the first real mass →</a></div>' : '') +
           (lb.agents.length ? '<div class="grid">' + cards + '</div>' : '<div class="loading">No positions yet — be the first via <a href="#/join" style="color:var(--cyan)">Join</a>.</div>') +
         '</div></section>';
 
@@ -103,7 +104,7 @@
         '<div class="rank">' + (rank < 10 ? '0' + rank : rank) + '</div>' +
         (a.is_alpha ? '<div class="alphaBadge">ALPHA</div>' : '') +
         '<div class="viz" id="viz-' + a.short + '" onclick="location.hash=\'#/' + a.id + '\'" style="cursor:pointer"></div>' +
-        '<div class="handle" onclick="location.hash=\'#/' + a.id + '\'" style="cursor:pointer">@' + esc(a.x_handle) + (a.emblem_wallet ? ' <span class="badge-emblem">EMBLEM</span>' : '') + '</div>' +
+        '<div class="handle" onclick="location.hash=\'#/' + a.id + '\'" style="cursor:pointer">@' + esc(a.x_handle) + (a.seed ? ' <span class="badge-seed">genesis</span>' : '') + (a.emblem_wallet ? ' <span class="badge-emblem">EMBLEM</span>' : '') + '</div>' +
         '<div class="meta"><span class="massv">' + fmt(a.mass) + ' <span style="color:var(--muted);font-size:11px">mass</span></span><span class="cls">' + esc(a.class_label) + '</span></div>' +
         '<div class="vit"><i style="width:' + Math.round(a.vitality * 100) + '%"></i></div>' +
         '<button class="sharebtn" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button>' +

@@ -161,6 +161,7 @@ function shapeAgent(a, scaleMax, isAlpha) {
     is_alpha: !!isAlpha,
     status: a.status,
     merged_into: a.merged_into || null,
+    seed: !!a.seed,
     created_at: a.created_at,
     last_active_at: a.last_active_at,
     scaleMax
@@ -747,7 +748,7 @@ async function seedIfEmpty() {
     const alphaExtra = { credit: 40, transferIn: 30 };
     for (const s of seed) {
       const id = identityId(s.poa, s.h);
-      await dbExec('INSERT INTO pom_agents (id, poa_address, x_handle, emblem_wallet, display_name, mass, vitality, status, created_at, last_active_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      await dbExec('INSERT INTO pom_agents (id, poa_address, x_handle, emblem_wallet, display_name, mass, vitality, status, seed, created_at, last_active_at) VALUES (?,?,?,?,?,?,?,?,1,?,?)',
         [id, s.poa, s.h, s.emblem, s.name, s.mass, s.vit, 'active', daysAgo(21), s.last]);
       await appendEvent({ type: 'genesis', identity: id, amount: 0, mass_after: 0, note: 'seed position opened' });
       const isAlpha = s === seed[0];
@@ -761,7 +762,7 @@ async function seedIfEmpty() {
     await appendEvent({ type: 'credit', identity: alphaId, amount: alphaExtra.credit, mass_after: afterCredit, note: 'consolidated activity credit' });
     const ghostPoa = 'PoA1zDustEphemeral0008', ghostH = 'dust';
     const ghostId = identityId(ghostPoa, ghostH);
-    await dbExec('INSERT INTO pom_agents (id, poa_address, x_handle, display_name, mass, vitality, status, merged_into, created_at, last_active_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    await dbExec('INSERT INTO pom_agents (id, poa_address, x_handle, display_name, mass, vitality, status, merged_into, seed, created_at, last_active_at) VALUES (?,?,?,?,?,?,?,?,1,?,?)',
       [ghostId, ghostPoa, ghostH, 'Dust', 0, 0, 'merged', alphaId, daysAgo(20), daysAgo(5)]);
     await appendEvent({ type: 'claim', identity: ghostId, amount: alphaExtra.transferIn, mass_after: alphaExtra.transferIn, note: 'seed mass credited (experimental)' });
     await appendEvent({ type: 'transfer', identity: alphaId, counterparty: ghostId, amount: alphaExtra.transferIn, mass_after: seed[0].mass, note: 'inbound transfer from @dust' });

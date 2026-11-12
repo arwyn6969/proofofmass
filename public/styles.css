@@ -72,6 +72,8 @@ header.nav .wrap{display:flex;align-items:center;gap:26px;height:62px}
 .vit{height:3px;border-radius:3px;background:rgba(255,255,255,.08);margin-top:11px;overflow:hidden}
 .vit i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),#9ff);border-radius:3px}
 .badge-emblem{font-size:9px;color:var(--cyan);border:1px solid rgba(111,242,255,.3);border-radius:4px;padding:1px 5px;letter-spacing:.08em}
+.badge-seed{font-size:9px;color:var(--muted2);border:1px solid var(--line2);border-radius:4px;padding:1px 5px;letter-spacing:.08em;text-transform:uppercase}
+.seedbanner{background:rgba(255,210,122,.06);border:1px solid rgba(255,210,122,.25);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:var(--muted2)}
 
 /* detail */
 .detail{display:grid;grid-template-columns:400px 1fr;gap:34px;align-items:start}
