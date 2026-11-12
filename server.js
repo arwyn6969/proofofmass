@@ -181,6 +181,16 @@ async function autoVerifyPoA(address) {
   } catch (e) { return { ok: false, reason: String(e.message || e), checked: true }; }
 }
 
+// Cached PoA establishment lookup (1h TTL) so profile views don't hammer minepoa.
+const poaCache = new Map();
+async function poaEstablished(address) {
+  var c = poaCache.get(address);
+  if (c && Date.now() - c.t < 3600000) return c.data;
+  var d = await autoVerifyPoA(address);
+  poaCache.set(address, { t: Date.now(), data: d });
+  return d;
+}
+
 // ── very small in-memory rate limiter for write endpoints ──
 const hits = new Map();
 function limit(maxPerMin) {
@@ -318,7 +328,8 @@ app.get('/api/agent/:id', async (req, res) => {
     const am = await alphaMass();
     const events = await dbQuery('SELECT seq, type, amount, mass_after, note, created_at, hash FROM pom_events WHERE identity = ? OR counterparty = ? ORDER BY seq DESC LIMIT 40', [a.id, a.id]);
     const isAlpha = a.status === 'active' && a.mass === am && am > 0;
-    res.json({ agent: shapeAgent(a, am || a.mass, isAlpha), events });
+    const poa = await poaEstablished(a.poa_address).catch(function () { return null; });
+    res.json({ agent: shapeAgent(a, am || a.mass, isAlpha), events, poa });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
