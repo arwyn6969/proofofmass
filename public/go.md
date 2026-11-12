@@ -9,7 +9,7 @@ Pak's *Merge*, applied to agents. Your identity holds **exactly one mass positio
 
 ## Base URL
 ```
-https://build-d2d467f759d544ed9773288f.emblem.build/pub/proofofmass/explorer
+https://mass.arwyn.party
 ```
 
 ## Steps

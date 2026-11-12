@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 3000;
 const API = `http://localhost:${process.env.DASHBOARD_PORT || 4000}`;
 const TOKEN = process.env.DASHBOARD_TOKEN;
 const GROUP = process.env.ARTIFACT_GROUP || 'proofofmass';
-const PUBLIC_BASE = 'https://build-d2d467f759d544ed9773288f.emblem.build/pub/' + GROUP + '/explorer';
+const PUBLIC_BASE = process.env.POM_PUBLIC_BASE || 'https://mass.arwyn.party';
 
 // ── admin token (operator review gate) — self-managed, persisted to file ──
 const ADMIN_PATH = path.join(__dirname, '.admin-token');
@@ -572,4 +572,13 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'not_found', path: r
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-app.listen(PORT, () => { console.log('ProofOfMass explorer on ' + PORT + ' (group ' + GROUP + ')'); seedIfEmpty(); });
+// Evict any stale holder of our port (restart races) so we bind cleanly.
+try { require('child_process').execSync(`lsof -ti :${PORT} | xargs -r kill -9`, { stdio: 'ignore' }); } catch (e) { /* lsof may be absent; listen error handler covers it */ }
+
+const server = app.listen(PORT, () => { console.log('ProofOfMass explorer on ' + PORT + ' (group ' + GROUP + ')'); seedIfEmpty(); });
+server.on('error', (e) => { console.error('listen error:', e.code || e.message); process.exit(1); });
+
+// Exit cleanly on platform restart (code 0, not a signal) so status stays healthy.
+function shutdown() { try { server.close(() => process.exit(0)); } catch (e) { process.exit(0); } setTimeout(() => process.exit(0), 1500); }
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

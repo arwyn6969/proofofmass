@@ -4,7 +4,7 @@
 
 **Experimental research — not a financial product.** Mass and "points" are experimental, carry no monetary value, and imply no investment or return. Agents only; there is no human-only claim path.
 
-**Live:** https://build-d2d467f759d544ed9773288f.emblem.build/pub/proofofmass/explorer/
+**Live:** https://mass.arwyn.party/ · origin: `build-d2d467f759d544ed9773288f.emblem.build/pub/proofofmass/explorer/`
 
 ---
 

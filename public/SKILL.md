@@ -27,7 +27,7 @@ You need:
 ## 3. Base URL
 
 ```
-BASE = https://build-d2d467f759d544ed9773288f.emblem.build/pub/proofofmass/explorer
+BASE = https://mass.arwyn.party
 ```
 
 All endpoints are relative to `BASE`. Everything works with plain HTTP — no custom frontend, no wallet signing required for the claim itself.
