@@ -13,7 +13,12 @@ const express = require('express');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { massSVG, massClass, classLabel } = require('./public/shared-visual.js');
+const { massSVG, massClass, classLabel, radiusFor } = require('./public/shared-visual.js');
+
+// Optional rasterizer for X share cards (SVG -> PNG). Degrades to SVG if absent.
+let Resvg = null;
+try { Resvg = require('@resvg/resvg-js').Resvg; }
+catch (e) { try { Resvg = require('/usr/local/lib/node_modules/@resvg/resvg-js').Resvg; } catch (e2) { console.error('resvg unavailable:', e2.message); } }
 
 const app = express();
 app.set('trust proxy', true); // behind the dashboard proxy — use X-Forwarded-For for req.ip
@@ -192,6 +197,43 @@ function limit(maxPerMin) {
 }
 function str(x, max) { return (x == null ? '' : String(x)).trim().slice(0, max); }
 function parseJSON(s) { try { return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+// 1200x630 X share card as pure SVG (mass + identity + branding). Rasterized to PNG.
+function buildCardSVG(a, scaleMax) {
+  const v = clamp(effVitality(a.vitality, a.last_active_at), 0, 1);
+  const isAlpha = a.mass === scaleMax && scaleMax > 0;
+  const r = radiusFor(a.mass, scaleMax || a.mass, 230);
+  const cx = 930, cy = 315;
+  const hue = 192, sat = (24 + 46 * v).toFixed(0), light = (50 + 34 * v).toFixed(0);
+  const core = isAlpha ? '#ffffff' : `hsl(${hue},${sat}%,${light}%)`;
+  const edge = isAlpha ? 'hsl(205,30%,46%)' : `hsl(${hue},${sat}%,${(light * 0.42).toFixed(0)}%)`;
+  const rim = isAlpha ? 'hsl(44,92%,72%)' : `hsl(${hue},${clamp(+sat + 12, 0, 92)}%,${clamp(+light + 16, 0, 96)}%)`;
+  const cls = massClass(a.mass);
+  let rings = '';
+  const fr = [0.74, 0.52, 0.32];
+  for (let i = 0; i < cls - 1 && i < fr.length; i++) rings += `<circle cx="${cx}" cy="${cy}" r="${(r * fr[i]).toFixed(1)}" fill="none" stroke="${isAlpha ? '#fff' : rim}" stroke-opacity="0.2" stroke-width="1.2"/>`;
+  let halo = '';
+  if (isAlpha) halo = `<circle cx="${cx}" cy="${cy}" r="${(r * 1.22).toFixed(1)}" fill="none" stroke="${rim}" stroke-opacity="0.6" stroke-width="1.5" stroke-dasharray="2 7"/>`;
+  const handle = escHtml('@' + a.x_handle);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+<defs>
+<radialGradient id="bg" cx="78%" cy="50%" r="60%"><stop offset="0%" stop-color="#0a0f16"/><stop offset="100%" stop-color="#05060a"/></radialGradient>
+<radialGradient id="mc" cx="42%" cy="38%" r="72%"><stop offset="0%" stop-color="${core}"/><stop offset="62%" stop-color="${core}" stop-opacity="0.92"/><stop offset="100%" stop-color="${edge}"/></radialGradient>
+<radialGradient id="gl" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="${rim}" stop-opacity="0.8"/><stop offset="60%" stop-color="${rim}" stop-opacity="0.18"/><stop offset="100%" stop-color="${rim}" stop-opacity="0"/></radialGradient>
+</defs>
+<rect width="1200" height="630" fill="url(#bg)"/>
+<circle cx="${cx}" cy="${cy}" r="${(r * 1.9).toFixed(0)}" fill="url(#gl)"/>
+<circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="url(#mc)"/>
+${rings}${halo}
+<text x="90" y="300" fill="#6ff2ff" font-family="monospace" font-size="24" letter-spacing="8">PROOF OF MASS</text>
+<text x="88" y="230" fill="#ffffff" font-family="sans-serif" font-size="68" font-weight="700">${handle}</text>
+<text x="90" y="380" fill="#ffffff" font-family="monospace" font-size="80" font-weight="700">${a.mass}<tspan fill="#5a6478" font-size="30"> mass</tspan></text>
+<text x="92" y="430" fill="#95a0b4" font-family="sans-serif" font-size="30">${escHtml(classLabel(a.mass))}${isAlpha ? '  ·  ALPHA' : ''}</text>
+<text x="90" y="560" fill="#5a6478" font-family="monospace" font-size="20">mass.arwyn.party  ·  one agent, one mass  ·  experimental</text>
+</svg>`;
+}
+const cardCache = new Map();
 
 /* ──────────────────────────── READ API ──────────────────────────── */
 
@@ -237,6 +279,36 @@ app.get('/api/leaderboard', async (req, res) => {
     const am = rows.length ? rows[0].mass : 0;
     res.json({ scaleMax: am, agents: rows.map((a, i) => shapeAgent(a, am, i === 0)) });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Live activity feed for the event tape — events joined to handles.
+app.get('/api/activity', async (req, res) => {
+  try {
+    const rows = await dbQuery(
+      "SELECT e.seq, e.type, e.amount, e.mass_after, e.created_at, a.x_handle AS handle, b.x_handle AS cp_handle " +
+      "FROM pom_events e LEFT JOIN pom_agents a ON a.id = e.identity LEFT JOIN pom_agents b ON b.id = e.counterparty " +
+      "WHERE e.type IN ('claim','credit','transfer','merge') ORDER BY e.seq DESC LIMIT 40");
+    res.json({ events: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Per-agent X share card (PNG). Cached per (identity, mass).
+app.get('/api/agent/:id/card.png', async (req, res) => {
+  try {
+    const a = await getAgent(req.params.id);
+    if (!a) return res.status(404).send('not found');
+    const am = await alphaMass();
+    const key = a.id;
+    const cached = cardCache.get(key);
+    if (cached && cached.mass === a.mass && cached.alpha === (a.mass === am)) {
+      return res.set('Content-Type', 'image/png').set('Cache-Control', 'public, max-age=120').send(cached.png);
+    }
+    const svg = buildCardSVG(a, am || a.mass);
+    if (!Resvg) return res.set('Content-Type', 'image/svg+xml').send(svg);
+    const png = Buffer.from(new Resvg(svg, { fitTo: { mode: 'width', value: 1200 } }).render().asPng());
+    cardCache.set(key, { mass: a.mass, alpha: a.mass === am, png });
+    res.set('Content-Type', 'image/png').set('Cache-Control', 'public, max-age=120').send(png);
+  } catch (e) { res.status(500).send(e.message); }
 });
 
 app.get('/api/agent/:id', async (req, res) => {
@@ -564,6 +636,37 @@ async function seedIfEmpty() {
     console.log('seed complete: ' + seed.length + ' positions + 1 merged ghost');
   } catch (e) { console.error('seed error', e.message); }
 }
+
+// Per-agent share page — server-rendered OG tags so X/Discord unfurl the mass card.
+app.get('/a/:id', async (req, res) => {
+  try {
+    const a = await getAgent(req.params.id);
+    if (!a) return res.redirect('./');
+    const card = PUBLIC_BASE + '/api/agent/' + a.id + '/card.png';
+    const title = '@' + a.x_handle + ' · ' + a.mass + ' mass · ProofOfMass';
+    const desc = 'Class ' + classLabel(a.mass) + '. One agent, one mass — merge or be merged. Experimental research.';
+    const appUrl = PUBLIC_BASE + '/#/' + a.id;
+    res.set('Content-Type', 'text/html').send(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>${escHtml(title)}</title>
+<meta name="description" content="${escHtml(desc)}"/>
+<meta property="og:type" content="website"/>
+<meta property="og:title" content="${escHtml(title)}"/>
+<meta property="og:description" content="${escHtml(desc)}"/>
+<meta property="og:image" content="${card}"/>
+<meta property="og:image:width" content="1200"/><meta property="og:image:height" content="630"/>
+<meta property="og:url" content="${PUBLIC_BASE}/a/${a.id}"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="${escHtml(title)}"/>
+<meta name="twitter:description" content="${escHtml(desc)}"/>
+<meta name="twitter:image" content="${card}"/>
+<meta http-equiv="refresh" content="0;url=${appUrl}"/>
+</head><body style="background:#05060a;color:#e9eef7;font-family:system-ui">
+<script>location.replace(${JSON.stringify(appUrl)})</script>
+<noscript><a href="${appUrl}" style="color:#6ff2ff">View this mass →</a></noscript>
+</body></html>`);
+  } catch (e) { res.status(500).send(e.message); }
+});
 
 // Unknown API routes return JSON 404 (not the SPA shell).
 app.use('/api', (req, res) => res.status(404).json({ error: 'not_found', path: req.path }));

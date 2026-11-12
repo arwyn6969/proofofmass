@@ -125,3 +125,45 @@ footer .root{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .hidden{display:none!important}
 .loading{color:var(--muted);font-family:var(--mono);font-size:13px;padding:30px 0;text-align:center}
 @media(max-width:860px){.hero .wrap{grid-template-columns:1fr}.detail{grid-template-columns:1fr}.alphaStage{order:-1}}
+
+/* ───────── V2 spectacle: live field + HUD + tape ───────── */
+#field{position:fixed;inset:0;width:100vw;height:100vh;z-index:0;background:#05060a;display:none}
+#field.on{display:block}
+body.home{background:#05060a}
+/* the hero stage overlays the canvas; it's click-through except interactive bits */
+.stage{position:relative;z-index:2;height:calc(100vh - 62px);min-height:560px;display:flex;flex-direction:column;
+  pointer-events:none;padding:0}
+.stage .wrap{pointer-events:none}
+.stage a,.stage button,.stage .cta{pointer-events:auto}
+.hud{display:flex;gap:34px;align-items:flex-start;padding:26px 0 0;flex-wrap:wrap}
+.hud .cell .k{font-size:10.5px;letter-spacing:.2em;color:var(--muted);text-transform:uppercase}
+.hud .cell .v{font-family:var(--mono);font-size:30px;color:#fff;margin-top:2px;line-height:1}
+.hud .cell .v.ticking{animation:pulse 1.2s ease}
+.hud .cell.ext .v{color:var(--cyan)}
+.hud .cell.alpha .v{color:var(--alpha);font-size:22px;padding-top:6px}
+@keyframes pulse{0%{text-shadow:0 0 0 rgba(111,242,255,0)}30%{text-shadow:0 0 22px rgba(111,242,255,.7)}100%{text-shadow:0 0 0 rgba(111,242,255,0)}}
+.stage-center{margin:auto 0;max-width:620px}
+.stage-center h1{font-size:clamp(40px,7vw,78px);line-height:.98;letter-spacing:-.03em;font-weight:600;text-shadow:0 2px 40px rgba(0,0,0,.6)}
+.stage-center h1 .thin{color:var(--muted2);font-weight:300}
+.stage-center p{color:var(--muted2);margin-top:16px;max-width:30em;font-size:16px;text-shadow:0 1px 20px rgba(0,0,0,.8)}
+.cta-row{display:flex;gap:12px;margin-top:26px;flex-wrap:wrap}
+.cta{display:inline-flex;align-items:center;gap:8px;padding:12px 20px;border-radius:10px;font-size:14px;font-weight:600;letter-spacing:.02em;cursor:pointer;border:1px solid var(--line2);background:rgba(255,255,255,.04);color:#fff;transition:all .2s}
+.cta:hover{border-color:var(--cyan);background:rgba(111,242,255,.08)}
+.cta.primary{background:var(--cyan);color:#04121a;border-color:var(--cyan)}
+.cta.primary:hover{box-shadow:0 0 30px rgba(111,242,255,.4)}
+.scrollcue{text-align:center;padding-bottom:16px;font-family:var(--mono);font-size:11px;letter-spacing:.2em;color:var(--muted);animation:bob 2.2s ease-in-out infinite}
+@keyframes bob{0%,100%{transform:translateY(0);opacity:.5}50%{transform:translateY(5px);opacity:1}}
+/* event tape */
+.tape{position:relative;z-index:2;pointer-events:none;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  background:rgba(5,6,10,.7);backdrop-filter:blur(6px);overflow:hidden;height:34px;display:flex;align-items:center}
+.tape .track{display:inline-flex;gap:30px;white-space:nowrap;animation:marquee 46s linear infinite;padding-left:100%}
+.tape:hover .track{animation-play-state:paused}
+.tape .ev{font-family:var(--mono);font-size:12px;color:var(--muted2)}
+.tape .ev b{color:#fff}.tape .ev .pos{color:var(--green)}.tape .ev .mrg{color:var(--alpha)}
+@keyframes marquee{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+/* survivors section sits on solid bg, covering the canvas on scroll */
+.survivors{position:relative;z-index:2;background:linear-gradient(180deg,rgba(5,6,10,.4),var(--bg) 80px);padding-top:30px}
+.sharebtn{display:inline-flex;align-items:center;gap:7px;padding:9px 15px;border-radius:9px;font-size:13px;font-weight:600;
+  border:1px solid rgba(111,242,255,.3);background:rgba(111,242,255,.06);color:var(--cyan);cursor:pointer}
+.sharebtn:hover{background:rgba(111,242,255,.14);border-color:var(--cyan)}
+.card .sharebtn{margin-top:10px;width:100%;justify-content:center;font-size:12px;padding:7px}

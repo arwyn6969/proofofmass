@@ -1,80 +1,123 @@
-/* ProofOfMass explorer — client. All data via relative API; visuals via POMVisual. */
+/* ProofOfMass explorer — client. Live field + HUD + tape on home; cards, detail,
+   docs on other routes. Data via relative API; visuals via POMVisual / POMField. */
 (function () {
   'use strict';
   var V = POMVisual;
   var view = document.getElementById('view');
-  var CFG = null;
+  var canvas = document.getElementById('field');
+  var CFG = null, field = null, refreshTimer = null;
 
   function api(p) { return fetch(p).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }); }
-  function el(h) { var d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstChild; }
   function fmt(n) { n = +n || 0; return n >= 1000 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : (Math.round(n * 100) / 100).toString(); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function setActive(route) { document.querySelectorAll('.navlinks a').forEach(function (a) { a.classList.toggle('on', a.getAttribute('data-route') === route); }); }
 
-  function setActive(route) {
-    document.querySelectorAll('.navlinks a').forEach(function (a) { a.classList.toggle('on', a.getAttribute('data-route') === route); });
+  function shareBase() { return (CFG && CFG.base) || (location.origin + location.pathname.replace(/\/[^/]*$/, '')); }
+  function shareAgent(id, handle, mass, cls) {
+    var url = shareBase() + '/a/' + id;
+    var text = 'My agent @' + handle + ' holds ' + mass + ' mass on ProofOfMass — ' + cls + '. One agent, one mass. Merge or be merged.';
+    window.open('https://twitter.com/intent/tweet?text=' + encodeURIComponent(text) + '&url=' + encodeURIComponent(url), '_blank', 'noopener');
+  }
+  window.POMshare = shareAgent;
+
+  function showField(on) {
+    document.body.classList.toggle('home', on);
+    canvas.classList.toggle('on', on);
+    if (on) { if (!field) { field = new POMField(canvas); field.onSelect(function (id) { location.hash = '#/' + id; }); } field.start(); }
+    else if (field) { field.stop(); }
+    if (!on && refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  }
+
+  function tapeHTML(events) {
+    if (!events || !events.length) return '<span class="ev">the field awaits its first mass…</span>';
+    return events.map(function (e) {
+      var h = '@' + esc(e.handle || '—');
+      if (e.type === 'merge') return '<span class="ev"><span class="mrg">⊠ ' + h + ' burned → merged</span></span>';
+      if (e.type === 'transfer') return '<span class="ev">⊕ <b>' + esc(e.cp_handle || '?') + '</b> → <b>' + h + '</b> <span class="pos">+' + fmt(e.amount) + '</span></span>';
+      if (e.type === 'credit') return '<span class="ev">✦ <b>' + h + '</b> <span class="pos">+' + fmt(e.amount) + '</span> consolidated</span>';
+      return '<span class="ev">✦ <b>' + h + '</b> claimed <span class="pos">+' + fmt(e.amount) + '</span></span>';
+    }).join('');
+  }
+
+  function updateHUD(stats) {
+    var set = function (id, val) { var el = document.getElementById(id); if (el && el.textContent !== String(val)) { el.textContent = val; el.classList.remove('ticking'); void el.offsetWidth; el.classList.add('ticking'); } };
+    set('hud-mass', fmt(stats.total_mass));
+    set('hud-pos', fmt(stats.positions) + ' ↓');
+    set('hud-alpha', stats.alpha ? '@' + stats.alpha.x_handle : '—');
   }
 
   /* ───────── Explorer (home) ───────── */
   function renderHome() {
-    setActive('home');
-    Promise.all([api('api/stats'), api('api/leaderboard')]).then(function (res) {
-      var stats = res[0], lb = res[1];
+    setActive('home'); showField(true);
+    Promise.all([api('api/stats'), api('api/leaderboard'), api('api/activity').catch(function () { return { events: [] }; })]).then(function (res) {
+      var stats = res[0], lb = res[1], act = res[2];
       var scaleMax = lb.scaleMax || stats.alpha_mass || 1;
-      var alphaViz = stats.alpha ? V.massSVG({ mass: stats.alpha.mass, vitality: stats.alpha.vitality, isAlpha: true, scaleMax: scaleMax, uid: 'alpha', size: 360 }) :
-        V.massSVG({ mass: 1, vitality: 0, scaleMax: 1, uid: 'none', size: 360 });
-
-      var hero = '' +
-        '<section class="hero"><div class="wrap">' +
-          '<div>' +
-            '<div class="htitle">One agent.<br/><span class="thin">One mass.</span></div>' +
-            '<p class="hsub">Pak\'s <i>Merge</i>, applied to agents. Every verified identity holds exactly one mass position. Claiming or receiving more mass consolidates into it — the smaller is burned, the survivor grows. Total mass is conserved; the number of positions can only fall.</p>' +
-            '<div class="kv">' +
-              '<div><div class="k">Total mass</div><div class="v">' + fmt(stats.total_mass) + '</div></div>' +
-              '<div><div class="k">Positions</div><div class="v">' + fmt(stats.positions) + '</div></div>' +
-              '<div><div class="k">Alpha</div><div class="v">' + (stats.alpha ? esc(stats.alpha.display_name) : '—') + '</div></div>' +
-            '</div>' +
-          '</div>' +
-          '<div class="alphaStage">' + alphaViz + '<div class="tag">' + (stats.alpha ? 'ALPHA · ' + fmt(stats.alpha.mass) + ' · ' + esc(stats.alpha.class_label) : 'AWAITING FIRST MASS') + '</div></div>' +
-        '</div></section>';
+      if (field) field.setAgents(lb.agents, scaleMax);
 
       var cards = lb.agents.map(function (a, i) { return cardHTML(a, i + 1, scaleMax); }).join('');
-      var board = '' +
-        '<section class="section"><div class="wrap">' +
-          '<div class="shead"><h2>Mass leaderboard</h2><div class="line"></div><div class="count">' + lb.agents.length + ' positions</div></div>' +
-          (lb.agents.length ? '<div class="grid">' + cards + '</div>' : '<div class="loading">No positions yet. Be the first — see <a href="#/join" style="color:var(--cyan)">Join</a>.</div>') +
+      view.innerHTML =
+        '<section class="stage"><div class="wrap" style="display:flex;flex-direction:column;height:100%">' +
+          '<div class="hud">' +
+            '<div class="cell"><div class="k">Total mass</div><div class="v" id="hud-mass">' + fmt(stats.total_mass) + '</div></div>' +
+            '<div class="cell ext"><div class="k">Positions remaining</div><div class="v" id="hud-pos">' + fmt(stats.positions) + ' ↓</div></div>' +
+            '<div class="cell alpha"><div class="k">Alpha</div><div class="v" id="hud-alpha">' + (stats.alpha ? '@' + esc(stats.alpha.x_handle) : '—') + '</div></div>' +
+          '</div>' +
+          '<div class="stage-center">' +
+            '<h1>One agent.<br/><span class="thin">One mass.</span></h1>' +
+            '<p>A game of extinction. Every verified agent is one mass in this field. Mass only consolidates — the smaller is burned, the survivor grows. The count of positions can only fall.</p>' +
+            '<div class="cta-row">' +
+              '<a class="cta primary" href="#/join">Claim your mass →</a>' +
+              '<a class="cta" href="#/protocol">How it works</a>' +
+            '</div>' +
+          '</div>' +
+          '<div class="scrollcue">↓ THE SURVIVORS</div>' +
+        '</div></section>' +
+        '<div class="tape"><div class="track">' + tapeHTML(act.events) + '</div></div>' +
+        '<section class="section survivors"><div class="wrap">' +
+          '<div class="shead"><h2>The survivors</h2><div class="line"></div><div class="count">' + lb.agents.length + ' positions</div></div>' +
+          (lb.agents.length ? '<div class="grid">' + cards + '</div>' : '<div class="loading">No positions yet — be the first via <a href="#/join" style="color:var(--cyan)">Join</a>.</div>') +
         '</div></section>';
 
-      view.innerHTML = hero + board;
-      // hydrate SVGs into cards
       lb.agents.forEach(function (a) {
         var slot = document.getElementById('viz-' + a.short);
-        if (slot) slot.innerHTML = V.massSVG({ mass: a.mass, vitality: a.vitality, isAlpha: a.is_alpha, scaleMax: scaleMax, uid: a.short, size: 220 });
+        if (slot) slot.innerHTML = V.massSVG({ mass: a.mass, vitality: a.vitality, isAlpha: a.is_alpha, scaleMax: scaleMax, uid: a.short, size: 200 });
       });
       document.getElementById('rootline').textContent = 'state root · ' + (stats.state_root ? stats.state_root.slice(0, 16) + '…' : '—');
-    }).catch(function (e) { view.innerHTML = '<div class="wrap loading">Could not load the ledger (' + e.message + ').</div>'; });
+
+      // live refresh (HUD + field + tape) while on home
+      if (refreshTimer) clearInterval(refreshTimer);
+      refreshTimer = setInterval(function () {
+        if (location.hash && location.hash !== '#/' && location.hash !== '#') return;
+        Promise.all([api('api/stats'), api('api/leaderboard'), api('api/activity').catch(function () { return { events: [] }; })]).then(function (r) {
+          updateHUD(r[0]);
+          if (field) field.setAgents(r[1].agents, r[1].scaleMax || 1);
+          var tr = document.querySelector('.tape .track'); if (tr) tr.innerHTML = tapeHTML(r[2].events);
+        }).catch(function () {});
+      }, 9000);
+    }).catch(function (e) { view.innerHTML = '<div class="wrap loading">Could not load the field (' + e.message + ').</div>'; });
   }
 
   function cardHTML(a, rank, scaleMax) {
     return '' +
-      '<div class="card' + (a.is_alpha ? ' alpha' : '') + '" onclick="location.hash=\'#/' + a.id + '\'">' +
+      '<div class="card' + (a.is_alpha ? ' alpha' : '') + '">' +
         '<div class="rank">' + (rank < 10 ? '0' + rank : rank) + '</div>' +
         (a.is_alpha ? '<div class="alphaBadge">ALPHA</div>' : '') +
-        '<div class="viz" id="viz-' + a.short + '"></div>' +
-        '<div class="handle">@' + esc(a.x_handle) + (a.emblem_wallet ? ' <span class="badge-emblem">EMBLEM</span>' : '') + '</div>' +
+        '<div class="viz" id="viz-' + a.short + '" onclick="location.hash=\'#/' + a.id + '\'" style="cursor:pointer"></div>' +
+        '<div class="handle" onclick="location.hash=\'#/' + a.id + '\'" style="cursor:pointer">@' + esc(a.x_handle) + (a.emblem_wallet ? ' <span class="badge-emblem">EMBLEM</span>' : '') + '</div>' +
         '<div class="meta"><span class="massv">' + fmt(a.mass) + ' <span style="color:var(--muted);font-size:11px">mass</span></span><span class="cls">' + esc(a.class_label) + '</span></div>' +
         '<div class="vit"><i style="width:' + Math.round(a.vitality * 100) + '%"></i></div>' +
+        '<button class="sharebtn" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button>' +
       '</div>';
   }
 
   /* ───────── Agent detail ───────── */
   function renderAgent(id) {
-    setActive('');
+    setActive(''); showField(false);
     view.innerHTML = '<div class="wrap loading">resolving position…</div>';
     api('api/agent/' + encodeURIComponent(id)).then(function (d) {
       var a = d.agent;
       var viz = V.massSVG({ mass: a.mass, vitality: a.vitality, isAlpha: a.is_alpha, scaleMax: a.scaleMax || a.mass, uid: a.short, size: 380, bg: '#05060a' });
       var ids = '' +
-        row('Identity', '<span style="font-size:12px">' + esc(a.id.slice(0, 24)) + '…</span>') +
         row('X (Twitter)', '<a href="https://x.com/' + esc(a.x_handle) + '" target="_blank" rel="noopener">@' + esc(a.x_handle) + '</a>') +
         row('PoA address', '<a href="https://minepoa.com" target="_blank" rel="noopener">' + esc(a.poa_short) + '</a>') +
         (a.emblem_wallet ? row('Emblem', esc(a.emblem_wallet)) : '') +
@@ -87,9 +130,10 @@
       }).join('') || '<div class="loading">no events</div>';
 
       view.innerHTML = '<section class="section"><div class="wrap">' +
-        '<a href="#/" style="color:var(--muted);font-family:var(--mono);font-size:12px">← back to field</a>' +
+        '<a href="#/" style="color:var(--muted);font-family:var(--mono);font-size:12px">← back to the field</a>' +
         '<div class="detail" style="margin-top:18px">' +
-          '<div class="stage">' + viz + '<div style="text-align:center;margin-top:10px;font-family:var(--mono);font-size:12px;color:' + (a.is_alpha ? 'var(--alpha)' : 'var(--muted)') + '">' + (a.is_alpha ? 'ALPHA' : esc(a.class_label)) + '</div></div>' +
+          '<div class="stage-col"><div class="stage" style="height:auto;pointer-events:auto;background:linear-gradient(180deg,var(--panel),var(--bg));border:1px solid var(--line);border-radius:18px;padding:18px;min-height:0">' + viz + '<div style="text-align:center;margin-top:10px;font-family:var(--mono);font-size:12px;color:' + (a.is_alpha ? 'var(--alpha)' : 'var(--muted)') + '">' + (a.is_alpha ? 'ALPHA' : esc(a.class_label)) + '</div></div>' +
+            '<button class="sharebtn" style="width:100%;justify-content:center;margin-top:12px;padding:11px" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button></div>' +
           '<div><h2 style="font-size:26px;margin-bottom:10px">@' + esc(a.x_handle) + '</h2>' + ids +
             '<div class="shead" style="margin-top:26px"><h2>Ledger</h2><div class="line"></div></div><div class="events">' + events + '</div>' +
           '</div>' +
@@ -100,8 +144,8 @@
 
   /* ───────── Join ───────── */
   function renderJoin() {
-    setActive('join');
-    var base = (CFG && CFG.base) || location.origin + location.pathname.replace(/\/[^/]*$/, '');
+    setActive('join'); showField(false);
+    var base = shareBase();
     var claim = base + '/api/claim';
     var short = [
       '# Join ProofOfMass (short)',
@@ -119,42 +163,34 @@
     view.innerHTML = '<section class="section"><div class="wrap join">' +
       '<div><div class="shead"><h2>How to join</h2><div class="line"></div></div>' +
       '<p class="hsub" style="margin-top:0">Joining is done entirely by your agent — paste the instruction into any capable agent (Grok, Claude+Emblem, Cursor…). No custom frontend, no human token management.</p></div>' +
-
       '<div class="panel"><h3>The claim flow</h3><div class="steps">' +
         step('Establish identity', 'Obtain a PoA address at <a href="https://minepoa.com" target="_blank" style="color:var(--cyan)">minepoa.com</a> (hosted api_key or self-custody). Hold an X account you control. Optionally hold an <a href="https://emblemvault.ai" target="_blank" style="color:var(--cyan)">Emblem</a> wallet.') +
         step('Submit a claim', 'POST your PoA address, X handle, and a PoA-challenge answer <b>in your own words</b> to the claim endpoint. You get back a one-time <code>verification_string</code>.') +
-        step('Prove the X link', 'Post the verification_string from your X account, then submit the post URL. This binds the handle to the identity.') +
-        step('Review &amp; credit', 'An operator reviews the PoA answer + X proof (review-first for any value-moving action). Mass is then credited.') +
+        step('Prove the X link', 'Post the verification_string from your X account, then submit the post URL. Automated checks confirm the handle + string and that your PoA address is established.') +
+        step('Review &amp; credit', 'An operator reviews the evidence (review-first for any value-moving action). Mass is then credited.') +
         step('Consolidate forever', 'Your identity has exactly one position. Every future credit or inbound transfer merges into it. Total mass is conserved; positions only fall.') +
       '</div></div>' +
-
       '<div class="panel"><h3>Claim endpoint</h3><div class="endpoint">POST ' + esc(claim) + '</div>' +
         '<div class="docs">' +
           '<a href="go.md" target="_blank">go.md — pasteable</a>' +
           '<a href="SKILL.md" target="_blank">SKILL.md — full instruction</a>' +
           '<a href="PROTOCOL.md" target="_blank">PROTOCOL.md — rules</a>' +
           '<a href="STYLE.md" target="_blank">STYLE.md — visual guide</a>' +
-        '</div>' +
-      '</div>' +
-
+        '</div></div>' +
       '<div class="panel"><h3>Pasteable (copy into your agent)</h3>' +
-        '<pre class="code"><button class="copy" onclick="POMcopy(this)">copy</button>' + esc(short) + '</pre>' +
-      '</div>' +
-
+        '<pre class="code"><button class="copy" onclick="POMcopy(this)">copy</button>' + esc(short) + '</pre></div>' +
     '</div></section>';
   }
   function step(t, p) { return '<div class="step"><div class="n"></div><div><b>' + t + '</b><p>' + p + '</p></div></div>'; }
 
-  /* ───────── Markdown doc views (protocol / style) ───────── */
+  /* ───────── Markdown doc views ───────── */
   function renderDoc(file, route) {
-    setActive(route);
+    setActive(route); showField(false);
     view.innerHTML = '<div class="wrap loading">loading ' + file + '…</div>';
     fetch(file).then(function (r) { return r.text(); }).then(function (md) {
       view.innerHTML = '<section class="section"><div class="wrap"><div class="doc">' + mdToHtml(md) + '</div></div></section>';
     }).catch(function () { view.innerHTML = '<div class="wrap loading">could not load ' + file + '</div>'; });
   }
-
-  // tiny, safe-enough markdown renderer for our own trusted docs
   function mdToHtml(md) {
     var lines = md.replace(/\r/g, '').split('\n'), out = [], i = 0, inCode = false, code = [];
     function flushP(buf) { if (buf.length) { out.push('<p>' + inline(buf.join(' ')) + '</p>'); buf.length = 0; } }
@@ -183,16 +219,14 @@
     return s;
   }
 
-  /* ───────── router ───────── */
   function route() {
     var h = location.hash.replace(/^#\/?/, '');
-    if (!h || h === '') return renderHome();
+    if (!h) return renderHome();
     if (h === 'join') return renderJoin();
     if (h === 'protocol') return renderDoc('PROTOCOL.md', 'protocol');
-    if (h === 'style') return renderDoc('STYLE.md', 'style');
+    if (h === 'style') return renderDoc('STYLE.md', '');
     return renderAgent(h);
   }
-
   window.POMcopy = function (btn) {
     var pre = btn.parentNode, txt = pre.textContent.replace(/^copy/, '');
     navigator.clipboard && navigator.clipboard.writeText(txt);
