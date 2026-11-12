@@ -39,6 +39,11 @@ let NFT = null;
 try { if (fs.existsSync(path.join(__dirname, '.nft.json'))) NFT = JSON.parse(fs.readFileSync(path.join(__dirname, '.nft.json'), 'utf8')); } catch (e) { console.error('nft config:', e.message); }
 const NFT_RPC = { 84532: 'https://sepolia.base.org', 8453: 'https://mainnet.base.org' };
 
+// Auto-approve a claim when BOTH automated checks pass (X post verified + PoA established).
+// Toggle via env POM_AUTO_APPROVE=1 or a gitignored .flags.json { "auto_approve": true }.
+let AUTO_APPROVE = process.env.POM_AUTO_APPROVE === '1';
+try { if (!AUTO_APPROVE && fs.existsSync(path.join(__dirname, '.flags.json'))) AUTO_APPROVE = !!JSON.parse(fs.readFileSync(path.join(__dirname, '.flags.json'), 'utf8')).auto_approve; } catch (e) { console.error('flags:', e.message); }
+
 // Minimal eth_call to read ownerOf(tokenId) from the badge contract (server-side).
 async function badgeOwnerOf(tokenId) {
   if (!NFT) return null;
@@ -303,6 +308,7 @@ app.get('/api/config', (req, res) => {
       checkpoint: PUBLIC_BASE + '/api/checkpoint'
     },
     docs: { short: PUBLIC_BASE + '/go.md', full: PUBLIC_BASE + '/SKILL.md', protocol: PUBLIC_BASE + '/PROTOCOL.md', style: PUBLIC_BASE + '/STYLE.md' },
+    auto_approve: AUTO_APPROVE,
     fuel: { enabled: !!VAULT_POA, vault_poa: VAULT_POA || null },
     nft: NFT ? { enabled: true, contract: NFT.contract, chain_id: NFT.chain_id, chain: NFT.chain, explorer: NFT.explorer || null, mint_fee_eth: NFT.mint_fee_eth || null } : { enabled: false },
     experimental: true
@@ -541,8 +547,8 @@ app.post('/api/claim', limit(12), async (req, res) => {
         // existing identity: this is a consolidation/credit request into the SAME single position
         await dbExec('UPDATE pom_agents SET verification_string = ?, emblem_wallet = COALESCE(?, emblem_wallet), base_wallet = COALESCE(?, base_wallet), display_name = COALESCE(?, display_name) WHERE id = ?', [vstr, wallet, baseWallet, name, id]);
       }
-      await dbExec('INSERT INTO pom_claims (id, identity, poa_address, x_handle, emblem_wallet, poa_answer, requested_amount, kind, status) VALUES (?,?,?,?,?,?,?,?,?)',
-        [claimId, id, poa, handle, wallet, answer, 0, 'claim', 'pending_proof']);
+      await dbExec('INSERT INTO pom_claims (id, identity, poa_address, x_handle, emblem_wallet, poa_answer, requested_amount, kind, status, vstr) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [claimId, id, poa, handle, wallet, answer, 0, 'claim', 'pending_proof', vstr]);
     });
 
     res.json({
@@ -576,7 +582,8 @@ app.post('/api/claim/:id/proof', limit(20), async (req, res) => {
     const subjectId = c.kind === 'transfer' ? c.counterparty : c.identity;
     const subject = await getAgent(subjectId);
     const subjectHandle = subject ? subject.x_handle : c.x_handle;
-    const subjectVstr = subject ? subject.verification_string : null;
+    // use THIS claim's own string (so a later re-claim can't break an in-flight proof)
+    const subjectVstr = c.vstr || (subject ? subject.verification_string : null);
 
     await serialize(async () => {
       await dbExec('UPDATE pom_claims SET x_proof_url = ?, status = ? WHERE id = ?', [url, 'pending_review', c.id]);
@@ -598,7 +605,7 @@ app.post('/api/claim/:id/proof', limit(20), async (req, res) => {
 
     // Optional: auto-approve only when BOTH automated checks pass AND the operator
     // has opted in via env. Default OFF — review-first is the safe default.
-    if (process.env.POM_AUTO_APPROVE === '1' && xRes.ok && poaRes.ok) {
+    if (AUTO_APPROVE && xRes.ok && poaRes.ok) {
       const amount = clamp(c.kind === 'transfer' ? c.requested_amount : 10, 0, 1e9);
       try {
         const out = await serialize(() => applyApproval(c, amount, 'auto-approved: X post + PoA established verified'));
@@ -633,8 +640,8 @@ app.post('/api/transfer', limit(12), async (req, res) => {
       // the sender authorizes with a fresh verification string (proves X control at transfer time)
       await dbExec('UPDATE pom_agents SET verification_string = ? WHERE id = ?', [vstr, fromId]);
       // claim.identity = receiver, counterparty = sender; proof subject = SENDER (handle/poa below)
-      await dbExec('INSERT INTO pom_claims (id, identity, poa_address, x_handle, poa_answer, requested_amount, kind, counterparty, status) VALUES (?,?,?,?,?,?,?,?,?)',
-        [claimId, toId, from.poa_address, from.x_handle, 'transfer authorization by sender', amount, 'transfer', fromId, 'pending_proof']);
+      await dbExec('INSERT INTO pom_claims (id, identity, poa_address, x_handle, poa_answer, requested_amount, kind, counterparty, status, vstr) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [claimId, toId, from.poa_address, from.x_handle, 'transfer authorization by sender', amount, 'transfer', fromId, 'pending_proof', vstr]);
     });
     res.json({
       ok: true, claim_id: claimId, kind: 'transfer', from: fromId, to: toId, amount, status: 'pending_proof',
@@ -769,6 +776,7 @@ app.post('/api/admin/review', requireAdmin, async (req, res) => {
 /* ──────────── one-time seed (experimental genesis positions) ──────────── */
 async function seedIfEmpty() {
   try {
+    if (process.env.POM_NO_SEED === '1' || fs.existsSync(path.join(__dirname, '.noseed'))) return; // real board — don't inject demo seeds
     const c = await dbQuery('SELECT COUNT(*) AS n FROM pom_agents');
     if (c[0] && c[0].n > 0) return;
     const daysAgo = (d) => new Date(Date.now() - d * 864e5).toISOString();
