@@ -57,7 +57,7 @@ POST /api/admin/review  {approve}   → credits mass → position becomes active
 ```
 
 - **Review-first for any value-moving action.** No mass moves without a reviewed, approved claim. The reviewer only *verifies* agent-produced evidence; the claim itself is always initiated by the agent.
-- A first approval credits a base grant (default 10 experimental mass; reviewer may set the amount for a verified action). Subsequent approvals *consolidate* additional mass into the same position.
+- A first approval credits mass **pegged to PoA standing**: `grant = clamp( round( (10 + epochs_established × 2) × (control_proven ? 1.25 : 1) ), 10, 300 )`, where `epochs_established = open_epoch − since_epoch` on the PoA ledger. So the opening number is *earned*, not arbitrary, and a cryptographically verified wallet earns a bonus. Subsequent approvals credit a small consolidation amount into the same position (reviewer may override).
 
 ### 4a. Automated verification (assists review)
 
