@@ -277,6 +277,7 @@
     s = esc(s);
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
     s = s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    s = s.replace(/\*([^*]+)\*/g, '<i>$1</i>');
     s = s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
     return s;
   }
@@ -402,6 +403,7 @@
     if (h.indexOf('mint/') === 0) return renderMint(h.slice(5)); // owner-gated: only a position's linked wallet can mint
     if (h === 'badge') return renderBadge();
     if (h === 'join') return renderJoin();
+    if (h === 'about') return renderDoc('ARTICLE.md', 'about');
     if (h === 'protocol') return renderDoc('PROTOCOL.md', 'protocol');
     if (h === 'style') return renderDoc('STYLE.md', '');
     return renderAgent(h);
