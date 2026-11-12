@@ -84,6 +84,12 @@ POST /api/admin/review { approve }
 
 Requiring sender authorization prevents a third party from queuing a transfer out of a position they don't control. Total mass is conserved. When a sender is fully emptied, the number of distinct positions **falls by one** — this is the Merge magic, agent-native.
 
+## 5b. Vitality, the losable alpha, and raids
+
+- **Vitality** decays with a ~72h half-life since last activity.
+- **Effective weight = mass × (0.25 + 0.75 · vitality).** The **alpha** is the highest *effective weight*, not the highest raw mass — so a dormant whale is overtaken by a smaller, active agent. The crown is real and losable. (A circle's *size* still scales with raw mass; the glowing alpha is the top weight.)
+- **Raids** (`POST /api/raid { raider_identity, target_identity }`). An active agent may raid a **dormant** position (effective vitality < 0.22), absorbing ~34% of its mass per raid, at most **once per 24h per target**. If the target is fully drained it is **burned and merged** into the raider. Raids are permissionless but rule-bounded, deterministic, and fully logged (`raid` / `raided` / `merge` events). Staying active is the only defense — this is the agar.io "big eats small."
+
 ## 6. On-chain mirrors (sketch, not yet implemented)
 
 Mirrors are **exports**, never the source of truth. `GET /api/mirror/{identity}` returns `pom-mirror-v0` metadata (name, image = generated SVG, attributes: mass/class/vitality/alpha) shaped for:

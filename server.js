@@ -144,14 +144,24 @@ async function getAgent(id) {
   const rows = await dbQuery('SELECT * FROM pom_agents WHERE id = ?', [id]);
   return rows[0] || null;
 }
-async function alphaMass() {
-  const rows = await dbQuery("SELECT MAX(mass) AS m FROM pom_agents WHERE status='active'");
-  return (rows[0] && rows[0].m) || 0;
+// Effective weight = mass scaled by recent vitality. A dormant whale decays toward
+// 25% of its mass, so an active smaller agent can overtake it → the alpha is LOSABLE.
+const RAID_THRESH = 0.22; // effective-vitality below this = "dormant" and raidable
+function effWeight(a) { return (a.mass || 0) * (0.25 + 0.75 * effVitality(a.vitality, a.last_active_at)); }
+// Field snapshot: scaleMax (circle radius = biggest MASS) + alphaId (crown = biggest WEIGHT).
+async function field() {
+  const rows = await dbQuery("SELECT id, mass, vitality, last_active_at FROM pom_agents WHERE status='active'");
+  let maxMass = 0, alphaId = null, alphaW = -1;
+  for (const a of rows) { if (a.mass > maxMass) maxMass = a.mass; const w = effWeight(a); if (w > alphaW) { alphaW = w; alphaId = a.id; } }
+  return { maxMass, alphaId, alphaW };
 }
 
 function shapeAgent(a, scaleMax, isAlpha) {
   const ev = effVitality(a.vitality, a.last_active_at);
+  const w = (a.mass || 0) * (0.25 + 0.75 * ev);
   return {
+    eff_weight: +w.toFixed(1),
+    raidable: a.status === 'active' && a.mass > 0 && ev < RAID_THRESH,
     id: a.id,
     short: a.id.slice(0, 10),
     display_name: a.display_name || ('@' + a.x_handle),
@@ -259,9 +269,8 @@ function parseJSON(s) { try { return s ? JSON.parse(s) : null; } catch (e) { ret
 function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 // 1200x630 X share card as pure SVG (mass + identity + branding). Rasterized to PNG.
-function buildCardSVG(a, scaleMax) {
+function buildCardSVG(a, scaleMax, isAlpha) {
   const v = clamp(effVitality(a.vitality, a.last_active_at), 0, 1);
-  const isAlpha = a.mass === scaleMax && scaleMax > 0;
   const r = radiusFor(a.mass, scaleMax || a.mass, 230);
   const cx = 930, cy = 315;
   const hue = 192, sat = (24 + 46 * v).toFixed(0), light = (50 + 34 * v).toFixed(0);
@@ -320,13 +329,13 @@ app.get('/api/stats', async (req, res) => {
     const rows = await dbQuery("SELECT COUNT(*) AS positions, COALESCE(SUM(mass),0) AS total_mass FROM pom_agents WHERE status='active'");
     const evc = await dbQuery('SELECT COUNT(*) AS n FROM pom_events');
     const head = await dbQuery('SELECT hash, seq, created_at FROM pom_events ORDER BY seq DESC LIMIT 1');
-    const alpha = await dbQuery("SELECT * FROM pom_agents WHERE status='active' ORDER BY mass DESC, created_at ASC LIMIT 1");
-    const am = (alpha[0] && alpha[0].mass) || 0;
+    const f = await field();
+    const alphaRow = f.alphaId ? await getAgent(f.alphaId) : null;
     res.json({
       positions: rows[0].positions,
       total_mass: rows[0].total_mass,
-      alpha_mass: am,
-      alpha: alpha[0] ? shapeAgent(alpha[0], am, true) : null,
+      alpha_mass: f.maxMass,
+      alpha: alphaRow ? shapeAgent(alphaRow, f.maxMass, true) : null,
       events: evc[0].n,
       state_root: head[0] ? head[0].hash : null,
       head_seq: head[0] ? head[0].seq : 0,
@@ -337,9 +346,11 @@ app.get('/api/stats', async (req, res) => {
 
 app.get('/api/leaderboard', async (req, res) => {
   try {
-    const rows = await dbQuery("SELECT * FROM pom_agents WHERE status='active' ORDER BY mass DESC, created_at ASC LIMIT 200");
-    const am = rows.length ? rows[0].mass : 0;
-    res.json({ scaleMax: am, agents: rows.map((a, i) => shapeAgent(a, am, i === 0)) });
+    const rows = await dbQuery("SELECT * FROM pom_agents WHERE status='active' LIMIT 200");
+    let maxMass = 0, alphaId = null, alphaW = -1;
+    for (const a of rows) { if (a.mass > maxMass) maxMass = a.mass; const w = effWeight(a); if (w > alphaW) { alphaW = w; alphaId = a.id; } }
+    rows.sort((x, y) => effWeight(y) - effWeight(x) || y.mass - x.mass);
+    res.json({ scaleMax: maxMass, agents: rows.map((a) => shapeAgent(a, maxMass, a.id === alphaId)) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -349,7 +360,7 @@ app.get('/api/activity', async (req, res) => {
     const rows = await dbQuery(
       "SELECT e.seq, e.type, e.amount, e.mass_after, e.created_at, a.x_handle AS handle, b.x_handle AS cp_handle " +
       "FROM pom_events e LEFT JOIN pom_agents a ON a.id = e.identity LEFT JOIN pom_agents b ON b.id = e.counterparty " +
-      "WHERE e.type IN ('claim','credit','transfer','merge') ORDER BY e.seq DESC LIMIT 40");
+      "WHERE e.type IN ('claim','credit','transfer','merge','raid','raided','fuel') ORDER BY e.seq DESC LIMIT 40");
     res.json({ events: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -359,16 +370,17 @@ app.get('/api/agent/:id/card.png', async (req, res) => {
   try {
     const a = await getAgent(req.params.id);
     if (!a) return res.status(404).send('not found');
-    const am = await alphaMass();
+    const f = await field();
+    const isAlpha = a.id === f.alphaId;
     const key = a.id;
     const cached = cardCache.get(key);
-    if (cached && cached.mass === a.mass && cached.alpha === (a.mass === am)) {
+    if (cached && cached.mass === a.mass && cached.alpha === isAlpha) {
       return res.set('Content-Type', 'image/png').set('Cache-Control', 'public, max-age=120').send(cached.png);
     }
-    const svg = buildCardSVG(a, am || a.mass);
+    const svg = buildCardSVG(a, f.maxMass || a.mass, isAlpha);
     if (!Resvg) return res.set('Content-Type', 'image/svg+xml').send(svg);
     const png = Buffer.from(new Resvg(svg, { fitTo: { mode: 'width', value: 1200 } }).render().asPng());
-    cardCache.set(key, { mass: a.mass, alpha: a.mass === am, png });
+    cardCache.set(key, { mass: a.mass, alpha: isAlpha, png });
     res.set('Content-Type', 'image/png').set('Cache-Control', 'public, max-age=120').send(png);
   } catch (e) { res.status(500).send(e.message); }
 });
@@ -377,13 +389,13 @@ app.get('/api/agent/:id', async (req, res) => {
   try {
     const a = await getAgent(req.params.id);
     if (!a) return res.status(404).json({ error: 'not_found' });
-    const am = await alphaMass();
+    const f = await field();
     const events = await dbQuery('SELECT seq, type, amount, mass_after, note, created_at, hash FROM pom_events WHERE identity = ? OR counterparty = ? ORDER BY seq DESC LIMIT 40', [a.id, a.id]);
-    const isAlpha = a.status === 'active' && a.mass === am && am > 0;
+    const isAlpha = a.status === 'active' && a.id === f.alphaId;
     const poa = await poaEstablished(a.poa_address).catch(function () { return null; });
     const chains = await poaChains(a.poa_address).catch(function () { return null; });
     if (poa && chains) { poa.control_proven = chains.control_proven; poa.verified_evm = chains.verified_evm; }
-    res.json({ agent: shapeAgent(a, am || a.mass, isAlpha), events, poa });
+    res.json({ agent: shapeAgent(a, f.maxMass || a.mass, isAlpha), events, poa });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -391,10 +403,10 @@ app.get('/api/agent/:id/svg', async (req, res) => {
   try {
     const a = await getAgent(req.params.id);
     if (!a) return res.status(404).send('not found');
-    const am = await alphaMass();
+    const f = await field();
     const svg = massSVG({
       mass: a.mass, vitality: effVitality(a.vitality, a.last_active_at),
-      isAlpha: a.mass === am && am > 0, scaleMax: am || a.mass, size: +req.query.size || 400,
+      isAlpha: a.id === f.alphaId, scaleMax: f.maxMass || a.mass, size: +req.query.size || 400,
       uid: a.id.slice(0, 8), bg: '#05060a', animate: req.query.static !== '1'
     });
     res.set('Content-Type', 'image/svg+xml').set('Cache-Control', 'no-cache').send(svg);
@@ -434,7 +446,7 @@ app.get('/api/mirror/:id', async (req, res) => {
   try {
     const a = await getAgent(req.params.id);
     if (!a) return res.status(404).json({ error: 'not_found' });
-    const am = await alphaMass();
+    const f = await field();
     const svgUrl = PUBLIC_BASE + '/api/agent/' + a.id + '/svg';
     res.json({
       _status: 'SKETCH — not anchored on-chain. Ledger is source of truth.',
@@ -448,7 +460,7 @@ app.get('/api/mirror/:id', async (req, res) => {
         { trait_type: 'mass', value: a.mass },
         { trait_type: 'class', value: classLabel(a.mass) },
         { trait_type: 'vitality', value: +effVitality(a.vitality, a.last_active_at).toFixed(2) },
-        { trait_type: 'alpha', value: a.mass === am && am > 0 }
+        { trait_type: 'alpha', value: a.id === f.alphaId }
       ],
       pom: { identity: a.id, poa_address: a.poa_address, x_handle: a.x_handle, emblem_wallet: a.emblem_wallet || null, state_root_ref: PUBLIC_BASE + '/api/checkpoint' },
       targets: { solana: 'Metaplex metadata (uri -> this JSON)', base: 'ERC-721 tokenURI (-> this JSON)', counterparty: 'XCP asset description ref' }
@@ -471,13 +483,13 @@ app.get('/api/nft/:tokenId', async (req, res) => {
       if (a) {
         agentId = a.id;
         name = 'ProofOfMass — @' + a.x_handle;
-        const am = await alphaMass();
+        const f = await field();
         desc = 'Soulbound badge for @' + a.x_handle + ' · mass ' + a.mass + ' · ' + classLabel(a.mass) + '. PoA-derived, non-transferable. Experimental.';
         image = PUBLIC_BASE + '/api/agent/' + a.id + '/card.png';
         attrs = [
           { trait_type: 'mass', value: a.mass },
           { trait_type: 'class', value: classLabel(a.mass) },
-          { trait_type: 'alpha', value: a.mass === am && am > 0 },
+          { trait_type: 'alpha', value: a.id === f.alphaId },
           { trait_type: 'soulbound', value: true }
         ];
       }
@@ -605,7 +617,10 @@ app.post('/api/claim/:id/proof', limit(20), async (req, res) => {
 
     // Optional: auto-approve only when BOTH automated checks pass AND the operator
     // has opted in via env. Default OFF — review-first is the safe default.
-    if (AUTO_APPROVE && xRes.ok && poaRes.ok) {
+    // Auto-credit ONLY when PoA control is cryptographically proven (verified wallet
+    // link on minepoa). Everything else falls to manual review — you can't auto-claim
+    // against a PoA address you don't demonstrably control.
+    if (AUTO_APPROVE && xRes.ok && poaRes.ok && poaRes.control_proven) {
       const amount = clamp(c.kind === 'transfer' ? c.requested_amount : 10, 0, 1e9);
       try {
         const out = await serialize(() => applyApproval(c, amount, 'auto-approved: X post + PoA established verified'));
@@ -682,6 +697,46 @@ app.post('/api/fuel', limit(12), async (req, res) => {
       verify_on: 'https://minepoa.com/api/explorer/tx/' + encodeURIComponent(txid),
       note: 'Operator will confirm your POA transfer to the vault on minepoa, then credit mass (capped so fuel never exceeds your earned mass).'
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// RAIDS — an active agent absorbs a DORMANT agent's mass (the agar.io "big eats
+// small"). Permissionless but bounded: target must be dormant (effective vitality
+// < RAID_THRESH), at most ~34% absorbed per raid, once per 24h per target. If the
+// target is fully drained it is burned and merged into the raider. Rule-enforced,
+// deterministic, fully logged — no operator approval (the rules are the gate).
+app.post('/api/raid', limit(10), async (req, res) => {
+  try {
+    const raiderId = str(req.body.raider_identity, 80) || identityId(str(req.body.raider_poa, 120), req.body.raider_handle);
+    const targetId = str(req.body.target_identity, 80);
+    if (!raiderId || !targetId || raiderId === targetId) return res.status(400).json({ error: 'need distinct raider_identity and target_identity' });
+    const raider = await getAgent(raiderId), target = await getAgent(targetId);
+    if (!raider || raider.status !== 'active') return res.status(400).json({ error: 'raider must be an active position' });
+    if (!target || target.status !== 'active' || target.mass <= 0) return res.status(400).json({ error: 'target must be an active position with mass' });
+    const tv = effVitality(target.vitality, target.last_active_at);
+    if (tv >= RAID_THRESH) return res.status(409).json({ error: 'target is not dormant (vitality ' + tv.toFixed(2) + ' ≥ ' + RAID_THRESH + '). Only dormant positions can be raided.' });
+    const last = await dbQuery("SELECT created_at FROM pom_events WHERE counterparty = ? AND type = 'raid' ORDER BY seq DESC LIMIT 1", [targetId]);
+    if (last.length) { const hrs = (Date.now() - new Date(last[0].created_at).getTime()) / 3.6e6; if (hrs >= 0 && hrs < 24) return res.status(429).json({ error: 'target already raided in the last 24h', retry_after_h: +(24 - hrs).toFixed(1) }); }
+
+    const out = await serialize(async () => {
+      const t = await getAgent(targetId), rr = await getAgent(raiderId); // re-read under the write lock
+      if (!t || t.status !== 'active' || t.mass <= 0 || !rr || rr.status !== 'active') throw new Error('positions changed; retry');
+      const take = Math.min(t.mass, Math.max(1, Math.round(t.mass * 0.34)));
+      const tNew = t.mass - take, rNew = rr.mass + take;
+      await dbExec('UPDATE pom_agents SET mass=?, vitality=1.0, last_active_at=? WHERE id=?', [rNew, nowISO(), rr.id]);
+      await appendEvent({ type: 'raid', identity: rr.id, counterparty: t.id, amount: take, mass_after: rNew, note: 'raided dormant @' + t.x_handle });
+      let merged = false;
+      if (tNew <= 0.0000001) {
+        await dbExec('UPDATE pom_agents SET mass=0, status=?, merged_into=?, last_active_at=? WHERE id=?', ['merged', rr.id, nowISO(), t.id]);
+        await appendEvent({ type: 'merge', identity: t.id, counterparty: rr.id, amount: 0, mass_after: 0, note: 'fully raided; merged into @' + rr.x_handle });
+        merged = true;
+      } else {
+        await dbExec('UPDATE pom_agents SET mass=? WHERE id=?', [tNew, t.id]);
+        await appendEvent({ type: 'raided', identity: t.id, counterparty: rr.id, amount: take, mass_after: tNew, note: 'mass raided by @' + rr.x_handle });
+      }
+      return { absorbed: take, raider_mass: rNew, target_mass: Math.max(0, tNew), merged };
+    });
+    res.json({ ok: true, kind: 'raid', raider: raiderId, target: targetId, absorbed: out.absorbed, raider_mass: out.raider_mass, target_mass: out.target_mass, merged: out.merged, note: 'Dormant-only, ≤34% per raid, once per 24h per target.' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

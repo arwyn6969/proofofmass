@@ -33,8 +33,11 @@
     return events.map(function (e) {
       var h = '@' + esc(e.handle || '—');
       if (e.type === 'merge') return '<span class="ev"><span class="mrg">⊠ ' + h + ' burned → merged</span></span>';
+      if (e.type === 'raid') return '<span class="ev"><span class="raid">⚔ <b>' + h + '</b> raided ' + esc(e.cp_handle || '?') + ' <span class="pos">+' + fmt(e.amount) + '</span></span></span>';
+      if (e.type === 'raided') return '<span class="ev"><span class="raid">☠ ' + h + ' raided by <b>' + esc(e.cp_handle || '?') + '</b> −' + fmt(e.amount) + '</span></span>';
       if (e.type === 'transfer') return '<span class="ev">⊕ <b>' + esc(e.cp_handle || '?') + '</b> → <b>' + h + '</b> <span class="pos">+' + fmt(e.amount) + '</span></span>';
       if (e.type === 'credit') return '<span class="ev">✦ <b>' + h + '</b> <span class="pos">+' + fmt(e.amount) + '</span> consolidated</span>';
+      if (e.type === 'fuel') return '<span class="ev">⛽ <b>' + h + '</b> fuelled <span class="pos">+' + fmt(e.amount) + '</span></span>';
       return '<span class="ev">✦ <b>' + h + '</b> claimed <span class="pos">+' + fmt(e.amount) + '</span></span>';
     }).join('');
   }
@@ -107,6 +110,7 @@
         '<div class="handle" onclick="location.hash=\'#/' + a.id + '\'" style="cursor:pointer">@' + esc(a.x_handle) + (a.seed ? ' <span class="badge-seed">genesis</span>' : '') + (a.emblem_wallet ? ' <span class="badge-emblem">EMBLEM</span>' : '') + '</div>' +
         '<div class="meta"><span class="massv">' + fmt(a.mass) + ' <span style="color:var(--muted);font-size:11px">mass</span></span><span class="cls">' + esc(a.class_label) + '</span></div>' +
         '<div class="vit"><i style="width:' + Math.round(a.vitality * 100) + '%"></i></div>' +
+        (a.raidable ? '<div class="raidtag">⚠ dormant · raidable</div>' : '') +
         '<button class="sharebtn" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button>' +
       '</div>';
   }
@@ -133,6 +137,7 @@
         row('Mass', '<b style="color:#fff">' + fmt(a.mass) + '</b>') +
         row('Class', esc(a.class_label)) +
         row('Vitality', Math.round(a.vitality * 100) + '%') +
+        row('Eff. weight', fmt(a.eff_weight) + (a.is_alpha ? ' <span style="color:var(--alpha)">· ALPHA</span>' : '') + (a.raidable ? ' <span style="color:var(--red)">⚠ dormant · raidable</span>' : '')) +
         row('Status', esc(a.status) + (a.merged_into ? ' → ' + esc(a.merged_into.slice(0, 10)) : ''));
       var events = (d.events || []).map(function (e) {
         return '<div class="ev"><span class="t">' + esc(e.type) + '</span><span>' + esc(e.note || '') + '</span><span class="amt">' + (e.amount ? '+' + fmt(e.amount) : '') + '</span></div>';

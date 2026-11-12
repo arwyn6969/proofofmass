@@ -198,7 +198,8 @@ body.home{background:#05060a}
 .tape .track{display:inline-flex;gap:30px;white-space:nowrap;animation:marquee 46s linear infinite;padding-left:100%}
 .tape:hover .track{animation-play-state:paused}
 .tape .ev{font-family:var(--mono);font-size:12px;color:var(--muted2)}
-.tape .ev b{color:#fff}.tape .ev .pos{color:var(--green)}.tape .ev .mrg{color:var(--alpha)}
+.tape .ev b{color:#fff}.tape .ev .pos{color:var(--green)}.tape .ev .mrg{color:var(--alpha)}.tape .ev .raid{color:#ff8a8a}
+.raidtag{margin-top:9px;font-family:var(--mono);font-size:10.5px;color:#ff8a8a;border:1px solid rgba(255,107,107,.3);border-radius:6px;padding:3px 7px;text-align:center}
 @keyframes marquee{from{transform:translateX(0)}to{transform:translateX(-100%)}}
 /* survivors section sits on solid bg, covering the canvas on scroll */
 .survivors{position:relative;z-index:2;background:linear-gradient(180deg,rgba(5,6,10,.4),var(--bg) 80px);padding-top:30px}
