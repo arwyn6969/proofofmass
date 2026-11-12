@@ -29,7 +29,10 @@ const API = `http://localhost:${process.env.DASHBOARD_PORT || 4000}`;
 const TOKEN = process.env.DASHBOARD_TOKEN;
 const GROUP = process.env.ARTIFACT_GROUP || 'proofofmass';
 const PUBLIC_BASE = process.env.POM_PUBLIC_BASE || 'https://mass.arwyn.party';
-const VAULT_POA = process.env.POM_VAULT_POA || null; // ProofOfMass PoA address that receives fuel deposits
+// ProofOfMass PoA address that receives Door-2 fuel deposits. Public address only
+// (never a key). From env, or a gitignored .vault.json ({ "vault_poa": "poa1…" }).
+let VAULT_POA = process.env.POM_VAULT_POA || null;
+try { if (!VAULT_POA && fs.existsSync(path.join(__dirname, '.vault.json'))) VAULT_POA = (JSON.parse(fs.readFileSync(path.join(__dirname, '.vault.json'), 'utf8')).vault_poa) || null; } catch (e) { console.error('vault config:', e.message); }
 
 // ── admin token (operator review gate) — self-managed, persisted to file ──
 const ADMIN_PATH = path.join(__dirname, '.admin-token');
