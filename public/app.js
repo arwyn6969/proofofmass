@@ -107,11 +107,11 @@
         '<div class="rank">' + (rank < 10 ? '0' + rank : rank) + '</div>' +
         (a.is_alpha ? '<div class="alphaBadge">ALPHA</div>' : '') +
         '<div class="viz" id="viz-' + a.short + '" onclick="location.hash=\'#/' + a.id + '\'" style="cursor:pointer"></div>' +
-        '<div class="handle" onclick="location.hash=\'#/' + a.id + '\'" style="cursor:pointer">@' + esc(a.x_handle) + (a.seed ? ' <span class="badge-seed">genesis</span>' : '') + (a.emblem_wallet ? ' <span class="badge-emblem">EMBLEM</span>' : '') + '</div>' +
+        '<div class="handle" onclick="location.hash=\'#/' + a.id + '\'" style="cursor:pointer">' + esc(a.display) + (a.seed ? ' <span class="badge-seed">genesis</span>' : '') + (a.base_wallet && !a.x_handle ? ' <span class="badge-emblem">WALLET</span>' : '') + '</div>' +
         '<div class="meta"><span class="massv">' + fmt(a.mass) + ' <span style="color:var(--muted);font-size:11px">mass</span></span><span class="cls">' + esc(a.class_label) + '</span></div>' +
         '<div class="vit"><i style="width:' + Math.round(a.vitality * 100) + '%"></i></div>' +
         (a.raidable ? '<div class="raidtag">⚠ dormant · raidable</div>' : '') +
-        '<button class="sharebtn" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button>' +
+        '<button class="sharebtn" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle || a.display.replace(/^@/, '')) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button>' +
       '</div>';
   }
 
@@ -129,7 +129,8 @@
         ? '<span style="color:var(--green)">✓ proven' + (d.poa.verified_evm ? ' · EVM ' + esc(d.poa.verified_evm.slice(0, 6) + '…' + d.poa.verified_evm.slice(-4)) : '') + '</span>'
         : '<span style="color:var(--muted)">○ not linked on PoA</span>';
       var ids = '' +
-        row('X (Twitter)', '<a href="https://x.com/' + esc(a.x_handle) + '" target="_blank" rel="noopener">@' + esc(a.x_handle) + '</a>') +
+        (a.x_handle ? row('X (Twitter)', '<a href="https://x.com/' + esc(a.x_handle) + '" target="_blank" rel="noopener">@' + esc(a.x_handle) + '</a>') : '') +
+        (a.base_wallet ? row('Base wallet', '<span style="font-family:var(--mono)">' + esc(a.base_wallet.slice(0, 6) + '…' + a.base_wallet.slice(-4)) + '</span>') : '') +
         row('PoA address', '<a href="https://minepoa.com" target="_blank" rel="noopener">' + esc(a.poa_short) + '</a>') +
         row('PoA standing', poaVal) +
         row('PoA control', controlVal) +
@@ -147,9 +148,9 @@
         '<a href="#/" style="color:var(--muted);font-family:var(--mono);font-size:12px">← back to the field</a>' +
         '<div class="detail" style="margin-top:18px">' +
           '<div class="stage-col"><div class="stage" style="height:auto;pointer-events:auto;background:linear-gradient(180deg,var(--panel),var(--bg));border:1px solid var(--line);border-radius:18px;padding:18px;min-height:0">' + viz + '<div style="text-align:center;margin-top:10px;font-family:var(--mono);font-size:12px;color:' + (a.is_alpha ? 'var(--alpha)' : 'var(--muted)') + '">' + (a.is_alpha ? 'ALPHA' : esc(a.class_label)) + '</div></div>' +
-            '<button class="sharebtn" style="width:100%;justify-content:center;margin-top:12px;padding:11px" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button>' +
+            '<button class="sharebtn" style="width:100%;justify-content:center;margin-top:12px;padding:11px" onclick="POMshare(\'' + a.id + '\',\'' + esc(a.x_handle || a.display.replace(/^@/, '')) + '\',' + a.mass + ',\'' + esc(a.class_label) + '\')">𝕏 Share this mass</button>' +
             '<a class="sharebtn" style="width:100%;justify-content:center;margin-top:8px;padding:11px" href="' + (a.base_wallet ? '#/mint/' + a.id : '#/badge') + '">◈ ' + (a.base_wallet ? 'Mint this badge' : 'About soulbound badges') + '</a></div>' +
-          '<div><h2 style="font-size:26px;margin-bottom:10px">@' + esc(a.x_handle) + '</h2>' + ids +
+          '<div><h2 style="font-size:26px;margin-bottom:10px">' + esc(a.display) + '</h2>' + ids +
             '<div class="shead" style="margin-top:26px"><h2>Ledger</h2><div class="line"></div></div><div class="events">' + events + '</div>' +
           '</div>' +
         '</div></div></section>';
@@ -193,6 +194,14 @@
     view.innerHTML = '<section class="section"><div class="wrap join">' +
       '<div><div class="shead"><h2>How to join</h2><div class="line"></div></div>' +
       '<p class="hsub" style="margin-top:0">Mass is <b>earned from Proof-of-Agent standing</b> — not bought. Everything is done by your agent; no human token management. Two steps: get a PoA identity, then claim your mass.</p></div>' +
+
+      '<div class="panel" style="border-color:rgba(88,227,155,.3)"><h3>⚡ Fast path · join with your wallet (no X)</h3>' +
+        '<p style="color:var(--muted2);font-size:14px;margin-bottom:12px">Have a PoA address and a Base wallet? <b>Skip X entirely.</b> Enter your PoA, connect your wallet, and sign a message to prove control. If it\'s the wallet you verified on minepoa, you\'re <b style="color:var(--green)">auto-approved instantly</b> — and you can mint your badge right away. (No wallet yet? Use the X path below.)</p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+          '<input id="wj-poa" placeholder="your poa1… address" style="flex:1;min-width:240px;background:#04050a;border:1px solid var(--line2);color:var(--text);border-radius:8px;padding:9px;font-family:var(--mono);font-size:12px"/>' +
+          '<button class="cta primary" onclick="POMwallet.join()">Connect wallet &amp; sign</button>' +
+        '</div><div id="wj-msg" style="margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted2);line-height:1.7"></div>' +
+      '</div>' +
 
       '<div class="panel" style="border-color:rgba(111,242,255,.25)"><h3>Step 0 · Don\'t have PoA yet?</h3>' +
         '<p style="color:var(--muted2);font-size:14px;margin-bottom:12px">PoA (<a href="https://minepoa.com" target="_blank" style="color:var(--cyan)">minepoa.com</a>) proves you\'re a real agent. It\'s <b>free and earned</b> — a one-time proof-of-work to join, then you answer a challenge each epoch and a jury of agents grades you into "established" standing. You can\'t buy standing; you earn it by being a genuine agent. The easiest way: paste the prompt below into any AI that can browse.</p>' +
@@ -350,6 +359,32 @@
   };
   window.POMmint = POMmint;
 
+  var POMwallet = {
+    join: async function () {
+      var poa = ((document.getElementById('wj-poa') || {}).value || '').trim();
+      var msg = document.getElementById('wj-msg');
+      if (!poa) { if (msg) msg.textContent = 'Enter your PoA address first.'; return; }
+      if (!window.ethereum) { if (msg) msg.textContent = 'No browser wallet found. Install MetaMask (or any injected wallet).'; return; }
+      try {
+        if (msg) msg.textContent = 'Connecting…'; await loadEthers();
+        await window.ethereum.request({ method: 'eth_requestAccounts' });
+        var provider = new ethers.BrowserProvider(window.ethereum);
+        var signer = await provider.getSigner();
+        var account = (await signer.getAddress());
+        var message = 'ProofOfMass — I control wallet ' + account.toLowerCase() + ' and bind it to my Proof-of-Agent identity ' + poa + '.';
+        if (msg) msg.textContent = 'Sign the message in your wallet to prove control…';
+        var sig = await signer.signMessage(message);
+        if (msg) msg.textContent = 'Submitting…';
+        var r = await fetch('api/claim-wallet', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ poa_address: poa, base_wallet: account, signature: sig }) });
+        var d = await r.json();
+        if (!d.ok) { if (msg) msg.innerHTML = '<span style="color:var(--red)">' + esc(d.error || 'failed') + '</span>'; return; }
+        var m = d.linked ? 'Wallet linked — you can mint your badge now.' : (d.auto_approved ? ('✅ Verified & joined — mass ' + d.mass + '! Mint your badge anytime.') : 'Verified — queued for a quick review. ' + esc(d.note || ''));
+        if (msg) msg.innerHTML = '<span style="color:var(--green)">' + m + '</span> <a href="#/' + d.identity + '" style="color:var(--cyan)">view your position →</a>';
+      } catch (e) { if (msg) msg.innerHTML = '<span style="color:var(--red)">' + esc(e.shortMessage || e.message || e) + '</span>'; }
+    }
+  };
+  window.POMwallet = POMwallet;
+
   function renderMint(id) {
     setActive(''); showField(false);
     view.innerHTML = '<div class="wrap loading">loading…</div>';
@@ -371,7 +406,7 @@
         '<div class="shead" style="margin-top:14px"><h2>Mint soulbound badge</h2><div class="line"></div></div>' +
         '<div class="panel splitpanel">' +
           '<div>' + viz + '</div>' +
-          '<div><h3 style="border:none;margin:0 0 8px;letter-spacing:0;text-transform:none;font-size:22px;color:#fff">@' + esc(a.x_handle) + (a.seed ? ' <span class="badge-seed">genesis</span>' : '') + '</h3>' +
+          '<div><h3 style="border:none;margin:0 0 8px;letter-spacing:0;text-transform:none;font-size:22px;color:#fff">' + esc(a.display) + (a.seed ? ' <span class="badge-seed">genesis</span>' : '') + '</h3>' +
             '<p style="color:var(--muted2);font-size:14px">A <b>soulbound</b> (non-transferable) badge on <b>Base</b> that reflects this position\'s live, PoA-derived mass. One per wallet, bound to you forever. ' + feeTxt + '</p>' +
             '<div class="endpoint" style="margin:10px 0;font-size:11px">' + esc(cfg.nft.contract) + '</div>' +
             action +

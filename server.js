@@ -14,6 +14,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { massSVG, massClass, classLabel, radiusFor } = require('./public/shared-visual.js');
+const { ethers } = require('ethers');
+function walletBindMessage(poa, wallet) { return 'ProofOfMass — I control wallet ' + String(wallet).toLowerCase() + ' and bind it to my Proof-of-Agent identity ' + poa + '.'; }
 
 // Optional rasterizer for X share cards (SVG -> PNG). Degrades to SVG if absent.
 let Resvg = null;
@@ -165,6 +167,7 @@ function shapeAgent(a, scaleMax, isAlpha) {
     id: a.id,
     short: a.id.slice(0, 10),
     display_name: a.display_name || ('@' + a.x_handle),
+    display: a.x_handle ? ('@' + a.x_handle) : (a.display_name || ('agent-' + a.id.slice(0, 6))),
     x_handle: a.x_handle,
     poa_address: a.poa_address,
     poa_short: a.poa_address.length > 14 ? a.poa_address.slice(0, 6) + '…' + a.poa_address.slice(-4) : a.poa_address,
@@ -368,7 +371,7 @@ app.get('/api/leaderboard', async (req, res) => {
 app.get('/api/activity', async (req, res) => {
   try {
     const rows = await dbQuery(
-      "SELECT e.seq, e.type, e.amount, e.mass_after, e.created_at, a.x_handle AS handle, b.x_handle AS cp_handle " +
+      "SELECT e.seq, e.type, e.amount, e.mass_after, e.created_at, COALESCE(NULLIF(a.x_handle,''), a.display_name) AS handle, COALESCE(NULLIF(b.x_handle,''), b.display_name) AS cp_handle " +
       "FROM pom_events e LEFT JOIN pom_agents a ON a.id = e.identity LEFT JOIN pom_agents b ON b.id = e.counterparty " +
       "WHERE e.type IN ('claim','credit','transfer','merge','raid','raided','fuel') ORDER BY e.seq DESC LIMIT 40");
     res.json({ events: rows });
@@ -585,6 +588,55 @@ app.post('/api/claim', limit(12), async (req, res) => {
       },
       note: 'Mass is credited only after review of your PoA answer and X proof. Review-first. Experimental points only.'
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// WALLET-PATH JOIN (no X required). The agent signs a bind message with its Base
+// wallet. If that wallet is the PoA's minepoa-verified wallet → PoA control proven
+// → auto-credit (no review). Also used to LINK a wallet to an existing position.
+app.post('/api/claim-wallet', limit(12), async (req, res) => {
+  try {
+    const poa = str(req.body.poa_address, 120);
+    const wallet = str(req.body.base_wallet, 60).toLowerCase();
+    const sig = str(req.body.signature, 400);
+    const name = str(req.body.display_name, 60) || null;
+    if (!poa || !/^0x[0-9a-f]{40}$/.test(wallet) || !sig) return res.status(400).json({ error: 'poa_address, base_wallet (0x) and signature required' });
+    let recovered;
+    try { recovered = ethers.verifyMessage(walletBindMessage(poa, wallet), sig).toLowerCase(); }
+    catch (e) { return res.status(400).json({ error: 'invalid signature' }); }
+    if (recovered !== wallet) return res.status(400).json({ error: 'signature does not match base_wallet' });
+
+    // Existing position for this PoA? Link the wallet to it (enables minting).
+    const existing = await dbQuery("SELECT * FROM pom_agents WHERE poa_address = ? AND status != 'merged' LIMIT 1", [poa]);
+    if (existing.length) {
+      await dbExec('UPDATE pom_agents SET base_wallet = ? WHERE id = ?', [wallet, existing[0].id]);
+      return res.json({ ok: true, linked: true, identity: existing[0].id, base_wallet: wallet, status: existing[0].status, note: 'Wallet linked to your existing position — you can now mint your badge.' });
+    }
+
+    const poaRes = await autoVerifyPoA(poa).catch(() => ({ established: false }));
+    const chains = await poaChains(poa).catch(() => ({ verified_evm: null }));
+    poaRes.control_proven = !!(chains.verified_evm && chains.verified_evm === wallet);
+    poaRes.verified_evm = chains.verified_evm;
+    const id = identityId(poa, wallet);
+    await serialize(async () => {
+      await dbExec('INSERT INTO pom_agents (id, poa_address, x_handle, base_wallet, display_name, mass, vitality, status, verification_string) VALUES (?,?,?,?,?,0,0,?,?)',
+        [id, poa, '', wallet, name || ('agent-' + wallet.slice(2, 8)), 'pending', null]);
+      await appendEvent({ type: 'genesis', identity: id, amount: 0, mass_after: 0, note: 'position opened via wallet (no X)' });
+    });
+
+    if (AUTO_APPROVE && poaRes.established && poaRes.control_proven) {
+      const amount = clamp(standingGrant(poaRes), 0, 1e9);
+      const out = await serialize(async () => {
+        await dbExec('UPDATE pom_agents SET mass=?, vitality=1.0, status=?, last_active_at=? WHERE id=?', [amount, 'active', nowISO(), id]);
+        await appendEvent({ type: 'claim', identity: id, amount, mass_after: amount, note: 'wallet-join: PoA control proven; mass credited' });
+        return { mass: amount };
+      });
+      return res.json({ ok: true, identity: id, base_wallet: wallet, auto_approved: true, mass: out.mass, note: 'Verified by wallet (no X). Mass credited — you can mint your badge now.' });
+    }
+    const claimId = 'c_' + crypto.randomBytes(8).toString('hex');
+    await dbExec('INSERT INTO pom_claims (id, identity, poa_address, x_handle, poa_answer, requested_amount, kind, status, auto_poa) VALUES (?,?,?,?,?,?,?,?,?)',
+      [claimId, id, poa, wallet, 'wallet-join (signed)', 0, 'claim', 'pending_review', JSON.stringify(poaRes)]);
+    res.json({ ok: true, identity: id, base_wallet: wallet, status: 'pending_review', claim_id: claimId, note: 'Wallet verified. ' + (poaRes.established ? 'Awaiting a quick operator review — link this wallet on minepoa for instant approval.' : 'Your PoA isn\'t established yet; become established on minepoa, then this clears.') });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

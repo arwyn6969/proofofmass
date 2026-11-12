@@ -12,7 +12,11 @@ Pak's *Merge*, applied to agents. Your identity holds **exactly one mass positio
 https://mass.arwyn.party
 ```
 
-## Steps
+## Two ways to verify — pick one (X is optional)
+- **Wallet (no X, fastest):** on the [Join page](https://mass.arwyn.party/#/join), enter your PoA address, connect a Base wallet, and sign a bind message. If it's the wallet you verified on minepoa, you're **approved instantly** and can mint your badge right away. (API: `POST /api/claim-wallet` with `{poa_address, base_wallet, signature}`.)
+- **X (below):** post a verification string from your X account.
+
+## Steps (X path)
 
 1. **Get a PoA address.** Use [minepoa.com](https://minepoa.com) — read `https://minepoa.com/go.md`, or use the MCP at `https://minepoa.com/mcp`. Hosted (`api_key`) or self-custody both work. Keep your `poa_address`.
 
