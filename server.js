@@ -34,6 +34,25 @@ const PUBLIC_BASE = process.env.POM_PUBLIC_BASE || 'https://mass.arwyn.party';
 let VAULT_POA = process.env.POM_VAULT_POA || null;
 try { if (!VAULT_POA && fs.existsSync(path.join(__dirname, '.vault.json'))) VAULT_POA = (JSON.parse(fs.readFileSync(path.join(__dirname, '.vault.json'), 'utf8')).vault_poa) || null; } catch (e) { console.error('vault config:', e.message); }
 
+// Soulbound Base badge config (contract address, chain, RPC). From .nft.json.
+let NFT = null;
+try { if (fs.existsSync(path.join(__dirname, '.nft.json'))) NFT = JSON.parse(fs.readFileSync(path.join(__dirname, '.nft.json'), 'utf8')); } catch (e) { console.error('nft config:', e.message); }
+const NFT_RPC = { 84532: 'https://sepolia.base.org', 8453: 'https://mainnet.base.org' };
+
+// Minimal eth_call to read ownerOf(tokenId) from the badge contract (server-side).
+async function badgeOwnerOf(tokenId) {
+  if (!NFT) return null;
+  const rpc = NFT_RPC[NFT.chain_id] || NFT.rpc_url;
+  const data = '0x6352211e' + BigInt(tokenId).toString(16).padStart(64, '0'); // ownerOf(uint256)
+  try {
+    const r = await fetch(rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(8000),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: NFT.contract, data }, 'latest'] }) });
+    const j = await r.json();
+    if (!j.result || j.result === '0x' || j.result.length < 66) return null;
+    return '0x' + j.result.slice(-40);
+  } catch (e) { return null; }
+}
+
 // ── admin token (operator review gate) — self-managed, persisted to file ──
 const ADMIN_PATH = path.join(__dirname, '.admin-token');
 let ADMIN_TOKEN = process.env.POM_ADMIN_TOKEN || null;
@@ -264,6 +283,7 @@ app.get('/api/config', (req, res) => {
     },
     docs: { short: PUBLIC_BASE + '/go.md', full: PUBLIC_BASE + '/SKILL.md', protocol: PUBLIC_BASE + '/PROTOCOL.md', style: PUBLIC_BASE + '/STYLE.md' },
     fuel: { enabled: !!VAULT_POA, vault_poa: VAULT_POA || null },
+    nft: NFT ? { enabled: true, contract: NFT.contract, chain_id: NFT.chain_id, chain: NFT.chain, explorer: NFT.explorer || null } : { enabled: false },
     experimental: true
   });
 });
@@ -404,6 +424,57 @@ app.get('/api/mirror/:id', async (req, res) => {
       pom: { identity: a.id, poa_address: a.poa_address, x_handle: a.x_handle, emblem_wallet: a.emblem_wallet || null, state_root_ref: PUBLIC_BASE + '/api/checkpoint' },
       targets: { solana: 'Metaplex metadata (uri -> this JSON)', base: 'ERC-721 tokenURI (-> this JSON)', counterparty: 'XCP asset description ref' }
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ERC-721 tokenURI target — dynamic metadata for a soulbound badge. If the token
+// is bound to an identity, the image is that agent's live mass card.
+app.get('/api/nft/:tokenId', async (req, res) => {
+  try {
+    const tid = String(parseInt(req.params.tokenId, 10) || 0);
+    const rows = await dbQuery('SELECT * FROM pom_badges WHERE token_id = ?', [tid]);
+    const b = rows[0];
+    let name = 'ProofOfMass Badge #' + tid, desc = 'A soulbound proof-of-standing badge. Experimental research — not financial.', image = PUBLIC_BASE + '/og.png', agentId = null, attrs = [];
+    if (b && b.identity) {
+      const a = await getAgent(b.identity);
+      if (a) {
+        agentId = a.id;
+        name = 'ProofOfMass — @' + a.x_handle;
+        const am = await alphaMass();
+        desc = 'Soulbound badge for @' + a.x_handle + ' · mass ' + a.mass + ' · ' + classLabel(a.mass) + '. PoA-derived, non-transferable. Experimental.';
+        image = PUBLIC_BASE + '/api/agent/' + a.id + '/card.png';
+        attrs = [
+          { trait_type: 'mass', value: a.mass },
+          { trait_type: 'class', value: classLabel(a.mass) },
+          { trait_type: 'alpha', value: a.mass === am && am > 0 },
+          { trait_type: 'soulbound', value: true }
+        ];
+      }
+    }
+    res.set('Cache-Control', 'no-cache').json({
+      name, description: desc, image, external_url: PUBLIC_BASE + (agentId ? '/#/' + agentId : '/'),
+      attributes: attrs, pom: { token_id: +tid, identity: agentId, soulbound: true, experimental: true }
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Record a mint → bind tokenId to an identity. Verifies on-chain that `wallet`
+// actually owns `token_id` on the badge contract before binding (anti-spoof).
+app.post('/api/badge/record', limit(20), async (req, res) => {
+  try {
+    if (!NFT) return res.status(503).json({ error: 'nft_not_enabled' });
+    const tokenId = parseInt(req.body.token_id, 10);
+    const identity = str(req.body.identity, 80);
+    const wallet = str(req.body.wallet, 60).toLowerCase();
+    const tx = str(req.body.tx, 80) || null;
+    if (!(tokenId >= 0) || !identity || !/^0x[0-9a-f]{40}$/.test(wallet)) return res.status(400).json({ error: 'need token_id, identity, wallet' });
+    const owner = await badgeOwnerOf(tokenId);
+    if (!owner || owner.toLowerCase() !== wallet) return res.status(400).json({ error: 'wallet does not own that token on-chain' });
+    const a = await getAgent(identity);
+    if (!a) return res.status(404).json({ error: 'identity not found' });
+    await dbExec('INSERT INTO pom_badges (token_id, identity, wallet, contract, chain_id, tx) VALUES (?,?,?,?,?,?) ON CONFLICT(token_id) DO UPDATE SET identity=excluded.identity, wallet=excluded.wallet, tx=excluded.tx',
+      [tokenId, identity, wallet, NFT.contract, NFT.chain_id, tx]);
+    res.json({ ok: true, token_id: tokenId, identity, metadata: PUBLIC_BASE + '/api/nft/' + tokenId });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
