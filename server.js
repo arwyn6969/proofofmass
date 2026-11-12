@@ -926,8 +926,17 @@ app.get('/a/:id', async (req, res) => {
 app.use('/api', (req, res) => res.status(404).json({ error: 'not_found', path: req.path }));
 
 // Static frontend + docs (served from /public only — never the source dir).
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+// CF edge-caches JS/CSS for hours regardless of origin headers, so we CACHE-BUST:
+// the HTML (served no-cache, uncached by CF) references assets with ?v=BUILD, and
+// BUILD changes on every deploy (= process restart) → a fresh URL = a fresh asset.
+const BUILD = Date.now();
+let INDEX_HTML = '';
+try {
+  INDEX_HTML = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8')
+    .replace(/"(app\.js|styles\.css|field\.js|shared-visual\.js)"/g, '"$1?v=' + BUILD + '"');
+} catch (e) { console.error('index load:', e.message); }
+app.use(express.static(path.join(__dirname, 'public'), { index: false, etag: true }));
+app.get('*', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.type('html').send(INDEX_HTML || '<!doctype html><title>ProofOfMass</title>'); });
 
 const server = app.listen(PORT, () => { console.log('ProofOfMass explorer on ' + PORT + ' (group ' + GROUP + ')'); seedIfEmpty(); poaChains('warm').catch(function () {}); });
 server.on('error', (e) => { console.error('listen error:', e.code || e.message); process.exit(1); });
